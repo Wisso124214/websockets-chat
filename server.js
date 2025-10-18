@@ -128,6 +128,41 @@ Deno.serve({
               );
               break;
 
+            case 'attachment':
+              if (data.targetId.includes('group')) {
+                groupSockets.forEach(({ id, sockets }) => {
+                  if (id === data.targetId) {
+                    messageToGroup(
+                      sockets,
+                      JSON.stringify({
+                        type: 'attachment',
+                        data: data.data,
+                        filename: data.filename,
+                      }),
+                      socket
+                    );
+                  }
+                });
+                return;
+              }
+
+              const targetSocketAttachment = Array.from(allSockets.keys()).find(
+                (s) => allSockets.get(s).id === data.targetId
+              );
+              if (
+                targetSocketAttachment &&
+                targetSocketAttachment.readyState === WebSocket.OPEN
+              ) {
+                targetSocketAttachment.send(
+                  JSON.stringify({
+                    type: 'attachment',
+                    data: data.data,
+                    filename: data.filename,
+                  })
+                );
+              }
+              break;
+
             default:
               console.log(`Unknown message: ${JSON.stringify(data)}`);
               break;
