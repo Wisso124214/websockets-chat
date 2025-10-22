@@ -1,6 +1,12 @@
+// import MainScreen from './screens/mainScreen/mainScreen.js';
+import ModalInput from './components/modalInput/modalInput.js';
+import ChatScreen from './screens/chatScreen/chatScreen.js';
+
+// Usar solo el modal ya presente en el DOM
+const modalInput = document.querySelector('wsc-modal-input');
 // const MAX_PAYLOAD_SIZE = 500 * 1024 * 1024; // 500 MB
 const MAX_PAYLOAD_SIZE = 1024 * 1024; // 1 MB
-const wsUri = 'ws://127.0.0.1/';
+const wsUri = `ws://${location.hostname}/`;
 let websocket = null;
 let pingInterval;
 
@@ -10,8 +16,10 @@ let clientSelected = { id: null, alias: null };
 
 const logElement = document.querySelector('#log');
 function log(text) {
-  logElement.innerText = `${logElement.innerText}${text}\n`;
-  logElement.scrollTop = logElement.scrollHeight;
+  if (logElement) {
+    logElement.innerText = `${logElement.innerText}${text}\n`;
+    logElement.scrollTop = logElement.scrollHeight;
+  }
 }
 
 // Nuevo: referencias al input y botón
@@ -21,11 +29,12 @@ const fileInput = document.querySelector('#fileInput');
 const downloadContainer = document.querySelector('#downloadContainer');
 
 // Crear un div para mostrar el Alias del cliente
-const clientAliasElement = document.createElement('div');
-clientAliasElement.id = 'clientAliasDisplay';
-clientAliasElement.innerText = 'Your alias: ';
-clientAliasElement.style.margin = '10px 0';
-document.body.insertBefore(clientAliasElement, logElement);
+const clientAliasElement = document.getElementById('clientAliasDisplay');
+if (clientAliasElement) {
+  clientAliasElement.innerText = 'Your alias: ';
+  clientAliasElement.style.margin = '10px 0';
+  document.body.insertBefore(clientAliasElement, logElement);
+}
 
 // Open the websocket when the page is shown
 window.addEventListener('pageshow', () => {
@@ -51,14 +60,26 @@ window.addEventListener('pageshow', () => {
             clientId = data.id;
 
             // Enviar alias al servidor al abrir la conexión
-            let alias = prompt('Enter your alias:');
-            if (alias) {
-              alias = toUpperCaseFirstLetter(alias);
-              clientAliasElement.innerText = `Your alias: ${alias}`;
-              websocket.send(
-                JSON.stringify({ type: 'alias', alias, id: clientId })
-              );
-            }
+            (async () => {
+              try {
+                let alias;
+                // do {
+                //   alias = await modalInput.waitForInput('Enter your alias:');
+                // } while (!alias);
+                alias = 'alias';
+                if (alias) {
+                  alias = toUpperCaseFirstLetter(alias);
+                  console.log(`Hello ${alias}`);
+                  if (clientAliasElement)
+                    clientAliasElement.innerText = `Your alias: ${alias}`;
+                  websocket.send(
+                    JSON.stringify({ type: 'alias', alias, id: clientId })
+                  );
+                }
+              } catch (err) {
+                console.error(err);
+              }
+            })();
             break;
 
           case 'message':
@@ -68,6 +89,7 @@ window.addEventListener('pageshow', () => {
           case 'newClient':
             const newClientAlias = `${data.alias || 'N/A'}`;
             log(`New client connected: ${newClientAlias}`);
+            log(`-- Client ID: ${data.id}`);
             if (data.id !== clientId) newChatButton(data.id, newClientAlias);
             break;
 
@@ -120,7 +142,7 @@ window.addEventListener('pageshow', () => {
   });
 
   // Nuevo: enviar contenido del input al presionar el botón
-  sendBtn.addEventListener('click', () => {
+  sendBtn?.addEventListener('click', () => {
     if (!websocket || websocket.readyState !== WebSocket.OPEN) {
       log('No conectado al servidor');
       return;
@@ -135,8 +157,11 @@ window.addEventListener('pageshow', () => {
     messageInput.value = '';
   });
 
-  fileInput.addEventListener('change', (e) => {
-    uploadFile(e, websocket, clientSelected.id);
+  fileInput?.addEventListener('change', (e) => {
+    if (fileInput.files.length > 0) {
+      uploadFile(e, websocket, clientSelected.id);
+      fileInput.value = '';
+    }
   });
 });
 

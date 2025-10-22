@@ -1,16 +1,21 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <script src="client.js" defer></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script type="module" src="client.js" defer></script>
     <link rel="stylesheet" href="client.css" />
-    <title>WebSocket Test</title>
+    <title>WebSockets Chat</title>
   </head>
   <body>
-    <h2>WebSocket Test</h2>
+    <wsc-main-screen></wsc-main-screen>
+    <wsc-chat-screen></wsc-chat-screen>
+    <wsc-modal-input></wsc-modal-input>
+    <!-- <h2>WebSockets Chat</h2>
     <input id="messageInput" type="text" placeholder="Escribe un mensaje" />
     <button id="sendBtn">Enviar</button>
+    <div id="clientAliasDisplay"></div>
     <input id="fileInput" type="file" style="margin-top: 10px" />
     <div id="downloadContainer" style="margin-top: 10px"></div>
-    <pre id="log"></pre>
+    <pre id="log"></pre> -->
   </body>
 </html>

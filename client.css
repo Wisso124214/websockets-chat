@@ -1,6 +1,45 @@
+@import url('https://fonts.googleapis.com/css2?family=Syne+Mono&display=swap');
+
+:root {
+  --mobile-width: 800px;
+
+  --background-color: #1d1d1d;
+  --text-color: #eee;
+  --primary-color: #3de0d5;
+  --primary-color-detail: #64ff6eff;
+  --secondary-color: #bfa443;
+  --secondary-color-detail: #bb6447;
+}
+
+body {
+  font-family: 'Syne Mono', 'Comic Sans MS', sans-serif;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+  background-color: var(--background-color);
+  color: var(--text-color);
+  padding: 0;
+  margin: 0;
+
+  scrollbar-width: thin;
+  scrollbar-color: #444 transparent;
+}
+
 #log {
-	height: 80vh;
-	overflow: scroll;
-	padding: 0.5rem;
-	border: 1px solid black;
+  height: 80vh;
+  overflow: scroll;
+  padding: 0.5rem;
+  border: 1px solid black;
+}
+
+@media screen and (max-width: 700px) {
+  .navigation {
+    flex-direction: column;
+  }
+}
+
+@media screen and (min-width: 700px) {
+  .navigation {
+    flex-direction: row;
+  }
 }

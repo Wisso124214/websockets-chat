@@ -2,6 +2,10 @@ const createResponse = async (path, mimeType) => {
   const file = await Deno.open(path, { read: true });
   const response = new Response(file.readable);
   response.headers.set('Content-Type', mimeType);
+  // CORS headers
+  response.headers.set('Access-Control-Allow-Origin', '*');
+  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  response.headers.set('Access-Control-Allow-Headers', 'Content-Type');
   return response;
 };
 
@@ -29,25 +33,52 @@ Deno.serve({
       const url = new URL(request.url);
       // If the request is a normal HTTP request,
       // we serve the client HTML, CSS, or JS.
-      switch (url.pathname) {
-        case '/client.js':
-          return await createResponse('./client.js', 'text/javascript');
-        case '/client.css':
-          return await createResponse('./client.css', 'text/css');
-        case '/':
-          return await createResponse('./index.html', 'text/html');
-        default:
-          return new Response('Not found', {
-            status: 404,
-          });
+      // Servir archivos estáticos de client, screens y components
+      if (url.pathname === '/client.js') {
+        return await createResponse('./client.js', 'text/javascript');
       }
+      if (url.pathname === '/client.css') {
+        return await createResponse('./client.css', 'text/css');
+      }
+      if (url.pathname === '/') {
+        return await createResponse('./index.html', 'text/html');
+      }
+      // Servir cualquier archivo dentro de /screens/ o /components/ con el mimeType adecuado
+      if (
+        url.pathname.startsWith('/screens/') ||
+        url.pathname.startsWith('/components/')
+      ) {
+        const filePath = '.' + url.pathname;
+        if (filePath.endsWith('.js')) {
+          return await createResponse(filePath, 'text/javascript');
+        }
+        if (filePath.endsWith('.css')) {
+          return await createResponse(filePath, 'text/css');
+        }
+        if (filePath.endsWith('.html')) {
+          return await createResponse(filePath, 'text/html');
+        }
+      }
+      // Si no se encuentra el archivo, responder 404 con CORS
+      const notFoundResponse = new Response('Not found', {
+        status: 404,
+      });
+      notFoundResponse.headers.set('Access-Control-Allow-Origin', '*');
+      notFoundResponse.headers.set(
+        'Access-Control-Allow-Methods',
+        'GET, POST, OPTIONS'
+      );
+      notFoundResponse.headers.set(
+        'Access-Control-Allow-Headers',
+        'Content-Type'
+      );
+      return notFoundResponse;
     }
     // If the request is a websocket upgrade,
     // we need to use the Deno.upgradeWebSocket helper
     const { socket, response } = Deno.upgradeWebSocket(request);
 
     socket.onopen = () => {
-      console.log('CONNECTED');
       const clientId = crypto.randomUUID(); // Generar un ID único
       allSockets.set(socket, { id: clientId }); // Asignar el ID al socket
 
@@ -56,7 +87,6 @@ Deno.serve({
     };
 
     socket.onmessage = (event) => {
-      console.log(`RECEIVED: ${event.data}`);
       try {
         const data = JSON.parse(event.data);
         if (data) {
@@ -176,7 +206,6 @@ Deno.serve({
 
     socket.onclose = () => {
       const sock = allSockets.get(socket);
-      console.log('DISCONNECTED');
       messageToGroup(
         allSockets,
         JSON.stringify({
