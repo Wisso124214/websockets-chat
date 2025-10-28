@@ -10,6 +10,7 @@ const createResponse = async (path, mimeType) => {
 };
 
 const messageToGroup = (sockets, JSONstringify, exceptSocket = null) => {
+  console.log('Sending message to:', sockets, JSONstringify);
   sockets.forEach((_, socket) => {
     if (socket !== exceptSocket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSONstringify);
@@ -144,6 +145,30 @@ Deno.serve({
               break;
 
             case 'reqGroups':
+              console.log('Groups requested');
+              groupSockets.forEach(({ id, sockets }) => {
+                sockets.forEach((s) => {
+                  console.log(`groupId: ${id}. Alias: ${s.alias}`);
+                });
+              });
+
+              console.log('from alias:', data.alias);
+              allSockets.get(socket).alias = data.alias;
+              messageToGroup(
+                allSockets,
+                JSON.stringify({
+                  type: 'groupsList',
+                  id: data.id,
+                  alias: data.alias,
+                  groups: groupSockets.map(({ id, alias, sockets }) => ({
+                    id,
+                    alias,
+                    members: Array.from(sockets).map(
+                      (s) => sockets.get(s).alias
+                    ),
+                  })),
+                })
+              );
               socket.send(
                 JSON.stringify({
                   type: 'groupsList',

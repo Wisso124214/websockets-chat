@@ -1,19 +1,30 @@
 export default class Message extends HTMLElement {
-  constructor() {
+  constructor({
+    title = '',
+    text = '',
+    timestamp = '',
+    isIncoming = false,
+    type = 'text',
+    fileName = '',
+    blob = null,
+    url = '',
+  } = {}) {
     super();
-    this.title = 'Username';
-    this.text = 'This is a message text.';
-    this.timestamp = '12:00';
-    this.isIncoming = false;
-    this.type = 'file'; // could be 'text' or 'file'
-    this.fileName = 'document.pdf';
-    this.blob = '<a href="#" download>Download</a>';
+    this.title = title;
+    this.text = text;
+    this.timestamp = timestamp;
+    this.isIncoming = isIncoming;
+    this.type = type;
+    this.fileName = fileName;
+    this.blob = blob;
+    this.url = url;
+    this.fileUrl = null; // URL creada a partir del blob
     this.initialCharLimit = 1100; // caracteres iniciales a mostrar
     this.incrementChars = 1000; // caracteres adicionales por cada clic en "ver más"
     this.currentCharLimit = this.initialCharLimit;
 
     this.attachShadow({ mode: 'open' });
-    this.shadowRoot.innerHTML = `
+    this.styleTemplate = `
         <style>
           #message-container-background {
             color: white;
@@ -26,7 +37,6 @@ export default class Message extends HTMLElement {
             padding: 15px 22px;
             margin: 8px 0;
             max-width: 65%;
-            min-width: 150px;
             text-align: left;
           }
 
@@ -45,9 +55,6 @@ export default class Message extends HTMLElement {
             align-self: flex-start;
           }
 
-          // #message-container.outgoing {}
-          // #message-container.incoming {}
-
           #message-container.outgoing > #message-title {
             display: none;
           }
@@ -55,27 +62,6 @@ export default class Message extends HTMLElement {
           #message-container.incoming > #message-title {
             color: color-mix(in srgb, var(--primary-color), black 25%);
           }
-
-          // #message-container #message-timestamp {
-          //   display: absolute;
-          //   margin-top: 10px;
-          //   padding-bottom: 15px;
-          //   font-size: 10px;
-          // }
-
-          // #message-container.outgoing > #message-timestamp {
-          //   color: color-mix(in srgb, color-mix(in srgb, var(--text-color), transparent 20%), black 0%);
-          //   text-align: left;
-          //   margin-left: -6px;
-          //   margin-bottom: -20px;
-          // }
-          
-          // #message-container.incoming #message-timestamp {
-          //   text-align: right;
-          //   margin-right: -6px;
-          //   margin-bottom: -21px;
-          //   color: color-mix(in srgb, color-mix(in srgb, var(--text-color), transparent 15%), black 10%);
-          // }
 
           #message-container #message-timestamp {
             display: absolute;
@@ -110,8 +96,8 @@ export default class Message extends HTMLElement {
           }
 
           #message-text {
-            background-color: red;
-            width: 88%;
+            width: max-content;
+            max-width: 100%;
             word-wrap: break-word;
             overflow-wrap: break-word;
             white-space: pre-wrap;
@@ -182,6 +168,98 @@ export default class Message extends HTMLElement {
             color: color-mix(in srgb, color-mix(in srgb, var(--primary-color-detail), blue 20%), transparent 50%);
           }
 
+
+          /* File message styles */
+
+          #message-file-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+
+          #message-file-content {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: space-between;
+            gap: 15px;
+            width: 100%;
+            padding: 12px 18px;
+            border-radius: 10px;
+            align-self: center;
+          }
+
+          #message-container.outgoing #message-file-content {
+            background-color: color-mix(in srgb, var(--primary-color), black 60%);
+          }
+          
+          #message-container.incoming #message-file-content {
+            background-color: color-mix(in srgb, var(--background-color), white 15%);            
+          }
+
+          #message-file {
+            font-weight: bold;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            white-space: pre-wrap;
+          }
+
+          #download-button {
+            cursor: pointer;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 100px;
+            padding: 3px;
+            margin: 0;
+            border: 1px solid color-mix(in srgb, var(--text-color) 70%, transparent);
+          }
+
+          #download-button:hover {
+            background-color: color-mix(in srgb, var(--background-color) 20%, transparent);
+          }
+
+          #download-button:active {
+            background-color: color-mix(in srgb, var(--background-color) 35%, transparent);
+          }
+
+          #download-button svg {
+            width: 80%;
+            height: 80%;
+          }
+
+          #download-button svg path {
+            stroke: var(--text-color);
+            stroke-width: 2px;
+          }
+
+          #metadata-container {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            margin-bottom: -15px;
+            width: max-content;
+            margin-left: -10px;
+          }
+
+          #file-size {
+            font-size: 12px;
+            color: var(--secondary-text-color);
+          }
+
+          #file-separator {
+            margin: 0 8px;
+            font-weight: bold;
+            color: var(--secondary-text-color);
+          }
+
+          #file-extension {
+            font-size: 12px;
+            color: var(--secondary-text-color);
+          }
+
           /* Mobile styles */
           @media screen and (max-width: 700px) {
             #message-container {
@@ -200,6 +278,10 @@ export default class Message extends HTMLElement {
             }
           }
         </style>
+    `;
+    this.shadowRoot.innerHTML =
+      this.styleTemplate +
+      `
         <div id="message-container-background">
           <div id="message-container" class=${this.isIncoming ? '"incoming"' : '"outgoing"'}">
             <div id="message-title">${this.title}</div>
@@ -207,8 +289,7 @@ export default class Message extends HTMLElement {
               ${
                 this.type === 'text'
                   ? `<div id="message-text">${this.text}</div>`
-                  : `<div id="message-file">${this.fileName}</div>
-                    <div id="download-button">${this.blob}</div>`
+                  : null
               }
             </div>
             <div id="message-timestamp">${this.timestamp}</div>
@@ -218,24 +299,27 @@ export default class Message extends HTMLElement {
   }
 
   render() {
-    const messageContainer =
-      this.shadowRoot.querySelector('#message-container');
-    const messageTitle = this.shadowRoot.querySelector('#message-title');
-    const messageContent = this.shadowRoot.querySelector('#message-content');
-    const messageTimestamp =
-      this.shadowRoot.querySelector('#message-timestamp');
-
-    // Actualizar el título
-    if (messageTitle) {
-      messageTitle.textContent = this.title;
-    }
-
-    // Actualizar la clase según isIncoming
-    if (messageContainer) {
-      messageContainer.className = this.isIncoming ? 'incoming' : 'outgoing';
-    }
+    if (!this.shadowRoot) return;
+    this.shadowRoot.innerHTML =
+      this.styleTemplate +
+      `
+      <div id="message-container-background">
+        <div id="message-container" class="${this.isIncoming ? 'incoming' : 'outgoing'}">
+          <div id="message-title">${this.title}</div>
+          <div id="message-content" class="${this.type}">
+            ${
+              this.type === 'text'
+                ? `<div id="message-text">${this.text}</div>`
+                : ''
+            }
+          </div>
+          <div id="message-timestamp">${this.timestamp}</div>
+        </div>
+      </div>
+    `;
 
     // Actualizar el contenido según el tipo
+    const messageContent = this.shadowRoot.querySelector('#message-content');
     if (messageContent) {
       if (this.type === 'text') {
         const isLongText = this.text.length > this.initialCharLimit;
@@ -257,14 +341,45 @@ export default class Message extends HTMLElement {
           seeMoreButton.addEventListener('click', () => this.toggleExpand());
         }
       } else if (this.type === 'file') {
-        messageContent.innerHTML = `<div id="message-file">${this.fileName}</div>
-                    <div id="download-button">${this.blob}</div>`;
+        // Limpiar URL anterior si existe
+        if (this.fileUrl) {
+          URL.revokeObjectURL(this.fileUrl);
+          this.fileUrl = null;
+        }
+        // Crear URL a partir del blob si existe
+        if (this.blob instanceof Blob) {
+          this.fileUrl = URL.createObjectURL(this.blob);
+        } else if (this.url) {
+          this.fileUrl = this.url;
+        } else {
+          this.fileUrl = '';
+        }
+        // Calcular tamaño del archivo
+        let fileSize = '';
+        if (this.blob && this.blob.size) {
+          const size = this.blob.size;
+          if (size < 1024) fileSize = size + ' B';
+          else if (size < 1024 * 1024)
+            fileSize = (size / 1024).toFixed(1) + ' KB';
+          else fileSize = (size / (1024 * 1024)).toFixed(2) + ' MB';
+        } else {
+          fileSize = 'Desconocido';
+        }
+        messageContent.innerHTML = `
+          <div id="message-file-container">
+            <div id="message-file-content">
+              <div id="message-file">${this.fileName}</div>
+              <a id="download-button" href="${this.fileUrl}" download="${this.fileName}">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"> <g id="Interface / Download"> <path id="Vector" d="M6 21H18M12 3V17M12 17L17 12M12 17L7 12" stroke="#000000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path> </g> </g></svg>
+              </a>
+            </div>
+            <div id="metadata-container">
+              <div id="file-size">${fileSize}</div>
+              <div id="file-separator">·</div>
+              <div id="file-extension">${this.fileName.split('.').pop().toUpperCase()}</div>
+            </div>
+          </div>`;
       }
-    }
-
-    // Actualizar el timestamp
-    if (messageTimestamp) {
-      messageTimestamp.textContent = this.timestamp;
     }
   }
 
@@ -282,28 +397,33 @@ export default class Message extends HTMLElement {
     this.render();
   }
 
-  connectedCallback() {}
+  connectedCallback() {
+    this.render();
+  }
 
-  disconnectedCallback() {}
+  disconnectedCallback() {
+    // Limpiar el objeto URL si existe
+    if (this.fileUrl) {
+      URL.revokeObjectURL(this.fileUrl);
+      this.fileUrl = null;
+    }
+  }
 
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue !== newValue) {
-      // console.log(name, oldValue, newValue);
       if (name === 'is-incoming') {
         this.isIncoming = newValue !== null;
-        console.log('isIncoming set to', this.isIncoming);
       } else {
-        // Convertir kebab-case a camelCase para propiedades
         const propName = name.replace(/-([a-z])/g, (_, letter) =>
           letter.toUpperCase()
         );
         this[propName] = newValue;
       }
-      // Resetear el límite de caracteres cuando cambia el texto
       if (name === 'text') {
         this.currentCharLimit = this.initialCharLimit;
       }
-      this.render();
+      // Solo renderizar si el shadowRoot existe
+      if (this.shadowRoot) this.render();
     }
   }
 

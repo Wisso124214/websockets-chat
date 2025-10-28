@@ -1,25 +1,28 @@
-// import MainScreen from './screens/mainScreen/mainScreen.js';
+import MainScreen from './screens/mainScreen/MainScreen.js';
 import ModalInput from './components/modalInput/modalInput.js';
-import ChatScreen from './screens/chatScreen/chatScreen.js';
+import ChatScreen from './screens/chatScreen/ChatScreen.js';
 
 // Usar solo el modal ya presente en el DOM
 const modalInput = document.querySelector('wsc-modal-input');
 // const MAX_PAYLOAD_SIZE = 500 * 1024 * 1024; // 500 MB
-const MAX_PAYLOAD_SIZE = 1024 * 1024; // 1 MB
+const MAX_PAYLOAD_SIZE = 1024 * 1024 * 5; // 5 MB
 const wsUri = `ws://${location.hostname}/`;
 let websocket = null;
 let pingInterval;
 
 // Modificar para incluir un ID de destino
 let clientId = null;
+let clientAlias = null;
 let clientSelected = { id: null, alias: null };
+let date = null;
 
 const logElement = document.querySelector('#log');
 function log(text) {
-  if (logElement) {
-    logElement.innerText = `${logElement.innerText}${text}\n`;
-    logElement.scrollTop = logElement.scrollHeight;
-  }
+  console.log(text);
+  // if (logElement) {
+  //   logElement.innerText = `${logElement.innerText}${text}\n`;
+  //   logElement.scrollTop = logElement.scrollHeight;
+  // }
 }
 
 // Nuevo: referencias al input y botón
@@ -41,10 +44,11 @@ window.addEventListener('pageshow', () => {
   log('OPENING');
 
   websocket = new WebSocket(wsUri);
+  window.websocket = websocket;
+  window.clientSelected = clientSelected;
 
   websocket.addEventListener('open', () => {
     log('CONNECTED');
-    websocket.send(JSON.stringify({ type: 'reqGroups' }));
   });
 
   websocket.addEventListener('close', () => {
@@ -54,6 +58,7 @@ window.addEventListener('pageshow', () => {
   websocket.addEventListener('message', (e) => {
     try {
       const data = JSON.parse(e.data);
+      console.log('Received data:', data);
       if (data) {
         switch (data.type) {
           case 'id':
@@ -62,18 +67,21 @@ window.addEventListener('pageshow', () => {
             // Enviar alias al servidor al abrir la conexión
             (async () => {
               try {
-                let alias;
                 // do {
-                //   alias = await modalInput.waitForInput('Enter your alias:');
-                // } while (!alias);
-                alias = 'alias';
-                if (alias) {
-                  alias = toUpperCaseFirstLetter(alias);
-                  console.log(`Hello ${alias}`);
+                //   clientAlias = await modalInput.waitForInput('Enter your alias:');
+                // } while (!clientAlias);
+                clientAlias = 'alias';
+                if (clientAlias) {
+                  clientAlias = toUpperCaseFirstLetter(clientAlias);
+                  console.log(`Hello ${clientAlias}`);
                   if (clientAliasElement)
-                    clientAliasElement.innerText = `Your alias: ${alias}`;
+                    clientAliasElement.innerText = `Your alias: ${clientAlias}`;
                   websocket.send(
-                    JSON.stringify({ type: 'alias', alias, id: clientId })
+                    JSON.stringify({
+                      type: 'alias',
+                      alias: clientAlias,
+                      id: clientId,
+                    })
                   );
                 }
               } catch (err) {
@@ -84,30 +92,55 @@ window.addEventListener('pageshow', () => {
 
           case 'message':
             log(`RECEIVED from ${data.from}: ${data.payload}`);
+            // Agregar mensaje recibido al componente wsc-message-list
+            const messageListRecv = document.querySelector('wsc-message-list');
+            date = new Date();
+            if (messageListRecv) {
+              messageListRecv.addMessage({
+                title: data.from || 'Desconocido',
+                text: data.payload,
+                timestamp:
+                  date.getHours().toString().padStart(2, '0') +
+                  ':' +
+                  date.getMinutes().toString().padStart(2, '0') +
+                  (date.getHours() >= 12 ? ' pm' : ' am'),
+                isIncoming: true,
+                type: 'text',
+              });
+            }
             break;
 
           case 'newClient':
             const newClientAlias = `${data.alias || 'N/A'}`;
             log(`New client connected: ${newClientAlias}`);
             log(`-- Client ID: ${data.id}`);
-            if (data.id !== clientId) newChatButton(data.id, newClientAlias);
+            if (data.id !== clientId)
+              newChatButton({ id: data.id, alias: newClientAlias });
             break;
 
           case 'clientsList':
             data.clients.forEach(({ id, alias }) => {
-              if (id !== clientId) newChatButton(id, alias);
+              if (id !== clientId) newChatButton({ id, alias });
             });
+            websocket.send(
+              JSON.stringify({
+                type: 'reqGroups',
+                alias: clientAlias,
+                id: clientId,
+              })
+            );
             break;
 
           case 'clientDisconnected':
             log(`Client disconnected: ${data.alias}`);
             log(`-- Client ID: ${data.id}`);
-            deleteClient(data.id, data.alias);
+            deleteClient(data.id);
             break;
 
           case 'groupsList':
+            console.log('Groups received:', data.groups);
             data.groups.forEach(({ id, alias, members }) => {
-              if (id !== clientId) newChatButton(id, alias, members);
+              newChatButton({ id, alias, members });
             });
             break;
 
@@ -116,13 +149,27 @@ window.addEventListener('pageshow', () => {
               type: 'application/octet-stream',
             });
             const url = URL.createObjectURL(blob);
-            const downloadBtn = document.createElement('a');
-            downloadBtn.href = url;
-            downloadBtn.download = data.filename || 'downloaded_file';
-            downloadBtn.innerText = `Download ${data.filename || 'file'}`;
-            downloadBtn.style.display = 'block';
-            downloadContainer.appendChild(downloadBtn);
-            log(`File received: ${data.filename || 'file'}`);
+            // Mostrar el archivo como mensaje en el chat
+            const messageListFile = document.querySelector('wsc-message-list');
+            date = new Date();
+            if (messageListFile) {
+              messageListFile.addMessage({
+                title: data.from || 'Desconocido',
+                timestamp:
+                  date.getHours().toString().padStart(2, '0') +
+                  ':' +
+                  date.getMinutes().toString().padStart(2, '0') +
+                  (date.getHours() >= 12 ? ' pm' : ' am'),
+                isIncoming: true,
+                type: 'file',
+                fileName: data.filename || 'Archivo',
+                blob: blob,
+                url,
+              });
+            }
+            log(
+              `File received: ${data.filename || 'file'} from ${data.from || 'unknown'}`
+            );
             break;
 
           default:
@@ -149,11 +196,27 @@ window.addEventListener('pageshow', () => {
     }
     const text = messageInput.value;
     const targetId = clientSelected.id;
-    if (!text || !targetId) return;
-    websocket.send(
-      JSON.stringify({ type: 'message', payload: text, targetId })
-    );
-    log(`SENT to ${clientSelected.alias}: ${text}`);
+    if (!text) return;
+    if (targetId) {
+      websocket.send(
+        JSON.stringify({ type: 'message', payload: text, targetId })
+      );
+      log(`SENT to ${clientSelected.alias}: ${text}`);
+    } else {
+      websocket.send(JSON.stringify({ type: 'broadcast', payload: text }));
+      log(`SENT broadcast: ${text}`);
+    }
+    // Agregar mensaje enviado al componente wsc-message-list
+    const messageListSend = document.querySelector('wsc-message-list');
+    if (messageListSend) {
+      messageListSend.addMessage({
+        title: 'Tú',
+        text: text,
+        timestamp: new Date().toLocaleTimeString(),
+        isIncoming: false,
+        type: 'text',
+      });
+    }
     messageInput.value = '';
   });
 
@@ -179,25 +242,39 @@ const toUpperCaseFirstLetter = (string) => {
   return string.slice(0, 1).toUpperCase() + string.slice(1);
 };
 
-const newChatButton = (id, alias, members = []) => {
-  const selectClient = document.createElement('button');
-  selectClient.innerText = alias;
-  selectClient.id = `client-btn-${id}`;
-  selectClient.addEventListener('click', () => {
-    clientSelected.id = id;
-    clientSelected.alias = alias;
-    clientSelected.members = members;
-    if (members.length > 0)
-      log(`Chatting with group: ${alias} (Members: ${members.join(', ')})`);
-    messageInput.focus();
-  });
-  document.body.insertBefore(selectClient, logElement);
+const newChatButton = (clientSelected) => {
+  const { id, alias, members = [] } = clientSelected;
+  const chat = document.querySelector('wsc-chat-list');
+
+  const tryAdd = () => {
+    if (chat && alias) {
+      chat.addChat({
+        userName: alias,
+        id,
+        members,
+      });
+    }
+  };
+
+  if (!chat) {
+    // Esperar a que el chat esté disponible
+    const observer = new MutationObserver(() => {
+      const chatNow = document.querySelector('wsc-chat-list');
+      if (chatNow) {
+        observer.disconnect();
+        tryAdd();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    tryAdd();
+  }
 };
 
 const deleteClient = (id) => {
-  const button = document.getElementById(`client-btn-${id}`);
-  if (button) {
-    document.body.removeChild(button);
+  const chatList = document.querySelector('wsc-chat-list');
+  if (chatList && typeof chatList.deleteChatById === 'function') {
+    chatList.deleteChatById(id);
   }
 };
 

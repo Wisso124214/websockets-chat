@@ -1,4 +1,4 @@
-import ChatList from '../../components/chatList/chatList.js';
+import ChatList from '../../components/chatList/ChatList.js';
 
 export default class MainScreen extends HTMLElement {
   constructor() {
@@ -33,8 +33,23 @@ export default class MainScreen extends HTMLElement {
           }
         </style>
         <h1 id="main-title">WebSockets Chat</h1>
-        <wsc-chat-list></wsc-chat-list>
       `;
+  }
+
+  hideScreen() {
+    this.style.display = 'none';
+    const chatList = document.getElementById('wsc-chat-list');
+    if (chatList) {
+      chatList.hideList();
+    }
+  }
+
+  showScreen() {
+    this.style.display = 'block';
+    const chatList = document.getElementById('wsc-chat-list');
+    if (chatList) {
+      chatList.showList();
+    }
   }
 
   connectedCallback() {}

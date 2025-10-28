@@ -1,4 +1,4 @@
-import Chat from '../Chat/Chat.js';
+import Chat from '../chat/Chat.js';
 
 export default class ChatList extends HTMLElement {
   constructor() {
@@ -19,39 +19,56 @@ export default class ChatList extends HTMLElement {
         }
       </style>
       
-      <div id="chat-list-container">
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-        <wsc-chat></wsc-chat>
-      </div>
+      <div id="chat-list-container"></div>
       `;
   }
 
-  addChat(userName, lastMessage, timestampLastMessage, unreadCount) {
+  hideList() {
+    const chatListContainer = this.shadowRoot.getElementById(
+      'chat-list-container'
+    );
+    chatListContainer.style.display = 'none';
+  }
+
+  showList() {
+    const chatListContainer = this.shadowRoot.getElementById(
+      'chat-list-container'
+    );
+    chatListContainer.style.display = 'flex';
+  }
+
+  addChat(clientData) {
+    const {
+      userName,
+      id,
+      members,
+      lastMessage,
+      timestampLastMessage,
+      unreadCount,
+    } = clientData;
+
     const chat = new Chat({
       userName,
+      userId: id,
+      members,
       lastMessage,
       timestampLastMessage,
       unreadCount,
     });
     this.shadowRoot.getElementById('chat-list-container').appendChild(chat);
+  }
+
+  deleteChatById(userId) {
+    const chatListContainer = this.shadowRoot.getElementById(
+      'chat-list-container'
+    );
+    const chats = Array.from(chatListContainer.children).filter(
+      (chat) => chat.userId === userId
+    );
+    for (let i = 0; i < chats.length; i++) {
+      chats[i].remove();
+      break;
+    }
   }
 
   getChat(index) {

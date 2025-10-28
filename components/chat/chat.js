@@ -1,9 +1,11 @@
 export default class Chat extends HTMLElement {
   constructor({
     userName = 'User Name',
-    lastMessage = ' Last message preview',
-    timestampLastMessage = '00:00',
-    unreadCount = 1,
+    lastMessage = '',
+    timestampLastMessage = '',
+    unreadCount = 0,
+    userId = null,
+    members = [],
   } = {}) {
     super();
 
@@ -11,6 +13,8 @@ export default class Chat extends HTMLElement {
     this.lastMessage = lastMessage;
     this.unreadCount = unreadCount;
     this.timestampLastMessage = timestampLastMessage;
+    this.userId = userId;
+    this.members = members;
 
     this.attachShadow({ mode: 'open' });
     this.shadowRoot.innerHTML = `
@@ -123,6 +127,29 @@ export default class Chat extends HTMLElement {
           </div>
         </div>
       `;
+
+    const mainScreen = document.querySelector('wsc-main-screen');
+    const chatContainer = this.shadowRoot.getElementById('chat-container');
+    const chatScreen = document.querySelector('wsc-chat-screen');
+
+    chatContainer.addEventListener('click', () => {
+      if (chatScreen) {
+        if (typeof chatScreen.selectChat === 'function') {
+          chatScreen.selectChat({
+            userName: this.userName,
+            userId: this.userId,
+          });
+        }
+        // Mostrar el chatScreen y ocultar el mainScreen usando los métodos públicos
+        if (typeof chatScreen.showScreen === 'function') {
+          chatScreen.showScreen();
+        }
+        if (mainScreen && typeof mainScreen.hideScreen === 'function') {
+          mainScreen.hideScreen();
+        }
+      }
+    });
+    this.render();
   }
 
   setUserName(name) {

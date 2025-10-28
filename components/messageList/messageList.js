@@ -1,4 +1,4 @@
-import Message from '../message/message.js';
+import Message from '../message/Message.js';
 
 export default class MessageList extends HTMLElement {
   constructor() {
@@ -58,95 +58,77 @@ export default class MessageList extends HTMLElement {
       </style>
       <div id="message-list-container-background"></div>
       <div id="message-list-image-container"></div>
-      <div id="message-list-container">
-        <wsc-message
-        
-          title="User1"
-          text="Hey! How's it going?"
-          timestamp="12:00"
-          is-incoming
-          type="text"
-        ></wsc-message>
-        <wsc-message
-          title="User2"
-          text="Really good, thanks! What about you?ssssssssssssssssssssssssssss"
-          timestamp="12:01"
-          type="text"
-        ></wsc-message>
-        <wsc-message
-          title="User1"
-          type="text"
-          text="Check out this file I found."
-          timestamp="12:02"
-          is-incoming
-        ></wsc-message>
-        <wsc-message
-          title="User2"
-          type="text"
-          
-          text="Heyy, this is a longer message to test how text wrapping and overflow handling works in the message component. Let's see if it looks good! Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. In id cursus mi pretium tellus duis convallis. Tempus leo eu aenean sed diam urna tempor. Pulvinar vivamus fringilla lacus nec metus bibendum egestas. Iaculis massa nisl malesuada lacinia integer nunc posuere. Ut hendrerit semper vel class aptent taciti sociosqu. Ad litora torquent per conubia nostra inceptos himenaeos.&#10;&#10;
-            
-            Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. In id cursus mi pretium tellus duis convallis. Tempus leo eu aenean sed diam urna tempor. Pulvinar vivamus fringilla lacus nec metus bibendum egestas. Iaculis massa nisl malesuada lacinia integer nunc posuere. Ut hendrerit semper vel class aptent taciti sociosqu. Ad litora torquent per conubia nostra inceptos himenaeos.&#10;&#10;
-            
-            Lorem ipsum dolor sit amet consectetur adipiscing elit. Quisque faucibus ex sapien vitae pellentesque sem placerat. "
-          timestamp="12:02"
-        ></wsc-message>
-        <wsc-message
-          title="User1"
-          type="file"
-          file-name="document.pdf"
-          blob='<a href="#" download>Download</a>'
-          timestamp="12:02"
-          is-incoming
-        ></wsc-message>
-
-        <wsc-message
-          title="User2"
-          type="text"
-          text="That's really interesting! Thanks for sharing."
-          timestamp="12:10"
-        ></wsc-message>
-        <wsc-message
-          title="User2"
-          type="file"
-          file-name="document2.pdf"
-          blob='<a href="#" download>Download</a>'
-          timestamp="12:04"
-        ></wsc-message>
-        <wsc-message
-          title="User2"
-          type="text"
-          text="That's really interesting! Thanks for sharing."
-          timestamp="12:10"
-          is-incoming
-        ></wsc-message>
-        <wsc-message
-          title="User2"
-          text="Really good, thanks! What about you?ssssssssssssssssssssssssssss"
-          timestamp="12:01"
-          type="text"
-        ></wsc-message>
-      </div>
+      <div id="message-list-container"></div>
     `;
+
+    // Promesa para esperar a que messageContainer esté disponible
+    this._containerReady = new Promise((resolve) => {
+      this._resolveContainerReady = resolve;
+    });
   }
 
   connectedCallback() {
+    this.loadMessageContainer();
+  }
+  /**
+   * Carga el contenedor de mensajes y configura el observer
+   */
+  loadMessageContainer() {
     this.messageContainer = this.shadowRoot.querySelector(
       '#message-list-container'
     );
-
-    // Hacer scroll al final cuando se carga el componente
     this.scrollToBottom();
-
-    // Observar cambios en los hijos del contenedor
     this.observer = new MutationObserver(() => {
       this.scrollToBottom();
     });
-
     this.observer.observe(this.messageContainer, {
       childList: true,
       subtree: false,
     });
+    // Resolver la promesa cuando el container esté listo
+    if (this._resolveContainerReady) {
+      this._resolveContainerReady();
+    }
+  }
+
+  /**
+   * Agrega un mensaje dinámicamente
+   * @param {Object} options { title, text, timestamp, isIncoming, type, fileName, blob }
+   */
+  addMessage({
+    title,
+    text,
+    timestamp,
+    isIncoming,
+    type = 'text',
+    fileName,
+    blob,
+  }) {
+    // Si el contenedor no está cargado, cargarlo y esperar
+    if (!this.messageContainer) {
+      this.loadMessageContainer();
+    }
+    // Esperar a que messageContainer esté disponible usando la promesa
+    this._containerReady.then(() => {
+      const msg = new Message({
+        title,
+        text,
+        timestamp,
+        isIncoming,
+        type,
+        fileName,
+        blob,
+      });
+      this.messageContainer.appendChild(msg);
+      msg.render();
+    });
+  }
+
+  /**
+   * Limpia todos los mensajes
+   */
+  clearMessages() {
+    this.messageContainer.innerHTML = '';
   }
 
   disconnectedCallback() {
