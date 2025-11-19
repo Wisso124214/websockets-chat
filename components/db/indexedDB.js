@@ -346,3 +346,210 @@ export async function clearBySession(sessionId) {
     req.onerror = () => reject(req.error);
   });
 }
+
+/**
+ * Lista las sesiones distintas presentes en el store (por sessionId) con última actividad.
+ * Si no existe índice `sessionId`, recorre todos los registros y agrupa por sessionId (o 'default').
+ * @returns {Promise<Array<{sessionId:string,lastActivity:number}>>}
+ */
+export async function listSessions() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const store = tx.objectStore(STORE);
+    const sessionsMap = new Map();
+    const finish = () => {
+      const arr = Array.from(sessionsMap.entries()).map(
+        ([sessionId, lastActivity]) => ({
+          sessionId,
+          lastActivity: lastActivity || 0,
+        })
+      );
+      arr.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+      resolve(arr);
+    };
+
+    if (store.indexNames.contains('sessionId')) {
+      const index = store.index('sessionId');
+      const req = index.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          const v = cursor.value || {};
+          const sid = v.sessionId || 'default';
+          const ts = v.createdAt || 0;
+          const prev = sessionsMap.get(sid) || 0;
+          if (ts > prev) sessionsMap.set(sid, ts);
+          cursor.continue();
+        } else {
+          finish();
+        }
+      };
+      req.onerror = () => reject(req.error);
+    } else {
+      // Sin índice, recorrer todo
+      const req = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          const v = cursor.value || {};
+          const sid = v.sessionId || 'default';
+          const ts = v.createdAt || 0;
+          const prev = sessionsMap.get(sid) || 0;
+          if (ts > prev) sessionsMap.set(sid, ts);
+          cursor.continue();
+        } else {
+          finish();
+        }
+      };
+      req.onerror = () => reject(req.error);
+    }
+  });
+}
+
+/**
+ * Elimina toda la información asociada a una sesión (wrapping de clearBySession).
+ * @param {string} sessionId
+ * @returns {Promise<void>}
+ */
+export async function deleteSession(sessionId) {
+  return clearBySession(sessionId);
+}
+
+/**
+ * Obtiene un resumen de chats (por chatId) para una sesión, incluyendo último mensaje y título sugerido.
+ * @param {string} [sessionId]
+ * @returns {Promise<Array<{chatId:string,lastMessage:string,lastType:'text'|'file',lastTitle:string,lastCreatedAt:number}>>}
+ */
+export async function getChatsSummaryBySession(sessionId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const store = tx.objectStore(STORE);
+    const currentSessionId =
+      sessionId ||
+      (typeof window !== 'undefined' && window.clientId) ||
+      'default';
+    const map = new Map();
+
+    const finalize = () => {
+      const arr = Array.from(map.values());
+      arr.sort((a, b) => (b.lastCreatedAt || 0) - (a.lastCreatedAt || 0));
+      resolve(arr);
+    };
+
+    const processRecord = (v) => {
+      if (!v) return;
+      const cid = v.chatId == null ? null : String(v.chatId);
+      if (!cid) return;
+      const prev = map.get(cid) || {
+        chatId: cid,
+        lastMessage: '',
+        lastType: 'text',
+        lastTitle: '',
+        lastCreatedAt: 0,
+      };
+      // Preferir el registro más reciente
+      if ((v.createdAt || 0) >= (prev.lastCreatedAt || 0)) {
+        const lastMessage =
+          v.type === 'text' ? v.text || '' : v.fileName || 'Archivo';
+        const lastType = v.type === 'file' ? 'file' : 'text';
+        // Alias sugerido: usar título de mensajes entrantes si existe; si no, dejar previo
+        const titleCandidate =
+          v.direction !== 'out' ? v.title || '' : prev.lastTitle;
+        map.set(cid, {
+          chatId: cid,
+          lastMessage,
+          lastType,
+          lastTitle: titleCandidate || prev.lastTitle || '',
+          lastCreatedAt: v.createdAt || 0,
+        });
+      } else if (!prev.lastTitle && v.direction !== 'out' && v.title) {
+        // Completar alias si aún no existe
+        prev.lastTitle = v.title;
+        map.set(cid, prev);
+      }
+    };
+
+    if (store.indexNames.contains('sessionId')) {
+      const index = store.index('sessionId');
+      const range = IDBKeyRange.only(currentSessionId);
+      const req = index.openCursor(range);
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          processRecord(cursor.value);
+          cursor.continue();
+        } else {
+          finalize();
+        }
+      };
+      req.onerror = () => reject(req.error);
+    } else {
+      // Sin índice: recorrer todo y filtrar por sessionId si existe en registros
+      const req = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          const v = cursor.value || {};
+          if (!('sessionId' in v) || v.sessionId === currentSessionId) {
+            processRecord(v);
+          }
+          cursor.continue();
+        } else {
+          finalize();
+        }
+      };
+      req.onerror = () => reject(req.error);
+    }
+  });
+}
+
+/**
+ * Obtiene todos los mensajes de una sesión (ordenados por createdAt asc).
+ * @param {string} [sessionId]
+ * @returns {Promise<Array<Object>>}
+ */
+export async function getMessagesBySession(sessionId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const store = tx.objectStore(STORE);
+    const currentSessionId =
+      sessionId ||
+      (typeof window !== 'undefined' && window.clientId) ||
+      'default';
+    const results = [];
+    const push = (v) => {
+      if (v && v.chatId != null) results.push(v);
+    };
+    const finalize = () => {
+      results.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      resolve(results);
+    };
+    if (store.indexNames.contains('sessionId')) {
+      const index = store.index('sessionId');
+      const range = IDBKeyRange.only(currentSessionId);
+      const req = index.openCursor(range);
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          push(cursor.value);
+          cursor.continue();
+        } else finalize();
+      };
+      req.onerror = () => reject(req.error);
+    } else {
+      const req = store.openCursor();
+      req.onsuccess = (e) => {
+        const cursor = e.target.result;
+        if (cursor) {
+          const v = cursor.value || {};
+          if (!('sessionId' in v) || v.sessionId === currentSessionId) push(v);
+          cursor.continue();
+        } else finalize();
+      };
+      req.onerror = () => reject(req.error);
+    }
+  });
+}

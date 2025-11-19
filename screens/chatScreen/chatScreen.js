@@ -294,12 +294,20 @@ export default class ChatScreen extends HTMLElement {
       }
     }
 
-    // Cargar historial desde IndexedDB para este chat
+    // Cargar historial desde cache precargada o IndexedDB para este chat
     const messageList = document.querySelector('wsc-message-list');
     if (messageList && typeof messageList.clearMessages === 'function') {
       messageList.clearMessages();
       try {
-        const history = await getMessagesByChat(userId, window.clientId);
+        let history = [];
+        if (
+          window.sessionMessages &&
+          Array.isArray(window.sessionMessages[userId])
+        ) {
+          history = window.sessionMessages[userId];
+        } else {
+          history = await getMessagesByChat(userId, window.clientId);
+        }
         for (const m of history) {
           const d = new Date(m.createdAt || Date.now());
           const ts =

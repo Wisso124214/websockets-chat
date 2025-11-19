@@ -17,7 +17,13 @@
 import MainScreen from './screens/mainScreen/MainScreen.js';
 import ModalInput from './components/modalInput/modalInput.js';
 import ChatScreen from './screens/chatScreen/ChatScreen.js';
-import { saveMessage } from './components/db/indexedDB.js';
+import {
+  saveMessage,
+  listSessions,
+  deleteSession,
+  getChatsSummaryBySession,
+} from './components/db/indexedDB.js';
+import { getMessagesBySession } from './components/db/indexedDB.js';
 
 // === CONFIGURACIÓN BÁSICA DE CONEXIÓN ===
 // Para desarrollo local con Live Server (HTTP en 127.0.0.1:5500)
@@ -32,6 +38,7 @@ const modalInput = document.querySelector('wsc-modal-input');
 window.clientId = null;
 let date = null;
 let fromClientAlias;
+let selectedExistingSession = false; // Solo reconstruir chats si el usuario escogió una sesión previa
 
 // === RECONEXIÓN AUTOMÁTICA ===
 // Estrategia: backoff exponencial simple (1s, 2s, 4s, ... máx 30s).
@@ -59,6 +66,326 @@ function resetReconnectState() {
   if (reconnectTimeoutId) {
     clearTimeout(reconnectTimeoutId);
     reconnectTimeoutId = null;
+  }
+}
+
+// === SESIONES GUARDADAS (alias <-> sessionId) ===
+const SESS_KEY = 'wsc_sessions_meta_v1';
+function getSessionsMeta() {
+  try {
+    const raw = localStorage.getItem(SESS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(
+      (x) => x && typeof x.sessionId === 'string' && typeof x.alias === 'string'
+    );
+  } catch {
+    return [];
+  }
+}
+function setSessionsMeta(arr) {
+  try {
+    localStorage.setItem(SESS_KEY, JSON.stringify(arr || []));
+  } catch {}
+}
+function upsertSessionMeta(sessionId, alias) {
+  const arr = getSessionsMeta();
+  const idx = arr.findIndex((x) => x.sessionId === sessionId);
+  if (idx >= 0) arr[idx].alias = alias;
+  else arr.push({ sessionId, alias });
+  setSessionsMeta(arr);
+}
+function removeSessionMeta(sessionId) {
+  const arr = getSessionsMeta().filter((x) => x.sessionId !== sessionId);
+  setSessionsMeta(arr);
+}
+
+// Garantiza alias único agregando sufijo " (n)" si ya existe uno igual.
+function ensureUniqueAlias(rawAlias) {
+  const meta = getSessionsMeta();
+  const alias = String(rawAlias || '').trim();
+  if (!alias) return alias;
+  // Quitar sufijo numérico si el usuario lo escribió manualmente para aplicar la lógica base
+  const match = alias.match(/^(.*?)(?:\s*\((\d+)\))?$/);
+  let base = match ? match[1].trim() : alias;
+  if (!base) base = alias;
+  // Escapar base para regex
+  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^${esc}(?: \(\d+\))?$`);
+  const duplicates = meta.filter((m) => pattern.test(m.alias));
+  if (duplicates.length === 0) return base; // Primer alias, sin sufijo
+  // Buscar máximo sufijo existente para evitar colisiones en caso de huecos
+  let maxN = 1; // alias base cuenta como 1
+  duplicates.forEach((d) => {
+    const m2 = d.alias.match(/^.*? \((\d+)\)$/);
+    if (m2) {
+      const n = parseInt(m2[1], 10);
+      if (!isNaN(n) && n > maxN) maxN = n;
+    }
+  });
+  // Nuevo alias será base + (maxN+1) si existe base limpio o cualquier sufijo
+  return `${base} (${maxN + 1})`;
+}
+
+async function getSavedSessionsCombined() {
+  let ids = [];
+  try {
+    ids = await listSessions();
+  } catch {
+    ids = [];
+  }
+  const meta = getSessionsMeta();
+  const metaMap = new Map(meta.map((m) => [m.sessionId, m.alias]));
+  // Merge, attach alias if known
+  const merged = ids.map((it) => ({
+    sessionId: it.sessionId,
+    alias: metaMap.get(it.sessionId) || null,
+    lastActivity: it.lastActivity || 0,
+  }));
+  // Include any meta sessions that might not appear in DB (edge)
+  meta.forEach((m) => {
+    if (!merged.find((x) => x.sessionId === m.sessionId)) {
+      merged.push({ sessionId: m.sessionId, alias: m.alias, lastActivity: 0 });
+    }
+  });
+  // Beautify alias if missing
+  merged.forEach((m) => {
+    if (!m.alias) {
+      const short = m.sessionId?.slice?.(0, 6) || 'sesión';
+      m.alias = `Usuario ${short}`;
+    }
+  });
+  // Sort by lastActivity desc
+  merged.sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
+  return merged;
+}
+
+async function promptSessionSelectionIfAny() {
+  const items = await getSavedSessionsCombined();
+  if (!items || items.length === 0) return null;
+  if (!modalInput) return null;
+
+  let current = items.slice();
+  const selected = await modalInput.waitForSelection(current, {
+    message: 'Selecciona una sesión guardada',
+    onDelete: async (item, index) => {
+      try {
+        // Confirmar borrado
+        const confirm = await modalInput.waitForConfirm(
+          `¿Eliminar la sesión "${item.alias}" y sus mensajes?`,
+          'Eliminar',
+          'Cancelar'
+        );
+        if (!confirm) return;
+        await deleteSession(item.sessionId);
+        removeSessionMeta(item.sessionId);
+        current.splice(index, 1);
+        modalInput._listItems = current;
+        modalInput.render();
+      } catch {}
+    },
+  });
+  return selected; // {sessionId, alias, index} | null
+}
+
+// Modal para cambiar de sesión manualmente desde el badge.
+window.openSessionSwitcher = async () => {
+  const modalInput = document.querySelector('wsc-modal-input');
+  if (!modalInput) return;
+  const items = await getSavedSessionsCombined();
+  if (!items.length) {
+    await modalInput.waitForConfirm(
+      'No hay sesiones guardadas',
+      'Ok',
+      'Cerrar'
+    );
+    return;
+  }
+  let current = items.slice();
+  const chosen = await modalInput.waitForSelection(current, {
+    message: 'Selecciona una sesión',
+    onDelete: async (item, index) => {
+      try {
+        const confirm = await modalInput.waitForConfirm(
+          `¿Eliminar la sesión "${item.alias}" y sus mensajes?`,
+          'Eliminar',
+          'Cancelar'
+        );
+        if (!confirm) return;
+        await deleteSession(item.sessionId);
+        removeSessionMeta(item.sessionId);
+        current.splice(index, 1);
+        modalInput._listItems = current;
+        modalInput.render();
+        // Si se elimina la sesión activa, limpiar UI
+        if (window.clientId === item.sessionId) {
+          try {
+            const chatListEl = document.getElementById('wsc-chat-list');
+            if (chatListEl && chatListEl.shadowRoot) {
+              const container = chatListEl.shadowRoot.getElementById(
+                'chat-list-container'
+              );
+              if (container)
+                while (container.firstChild)
+                  container.removeChild(container.firstChild);
+            }
+            const mainScreen = document.querySelector('wsc-main-screen');
+            if (
+              mainScreen &&
+              typeof mainScreen.setActiveSessionLabel === 'function'
+            ) {
+              mainScreen.setActiveSessionLabel('');
+            }
+          } catch {}
+        }
+      } catch {}
+    },
+  });
+  if (!chosen) return;
+  if (chosen.sessionId === window.clientId) return; // Sin cambio
+  // Cambiar a sesión seleccionada
+  window.clientId = chosen.sessionId;
+  window.clientAlias = chosen.alias;
+  selectedExistingSession = true;
+  try {
+    const mainScreen = document.querySelector('wsc-main-screen');
+    if (mainScreen && typeof mainScreen.setActiveSessionLabel === 'function') {
+      mainScreen.setActiveSessionLabel(window.clientAlias);
+    }
+  } catch {}
+  // Reconstruir chats desde historial
+  await rebuildChatListFromHistory(window.clientId);
+  // Avisar al servidor del nuevo alias (manteniendo id de conexión)
+  try {
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+      websocket.send(
+        JSON.stringify({
+          type: 'alias',
+          alias: window.clientAlias,
+          id: clientId, // id asignado por servidor, no cambiamos
+        })
+      );
+    }
+  } catch {}
+};
+
+// Refrescar manualmente historial precargado manteniendo el chat seleccionado
+window.refreshSessionHistory = async () => {
+  try {
+    if (!window.clientId) return;
+    const chatScreen = document.querySelector('wsc-chat-screen');
+    let preferredId = null;
+    if (chatScreen && typeof chatScreen.selectedClient === 'object') {
+      preferredId = chatScreen.selectedClient?.id || null;
+    }
+    await rebuildChatListFromHistory(window.clientId);
+    if (preferredId) {
+      // Intentar re-seleccionar el chat anterior
+      const chatListEl = document.getElementById('wsc-chat-list');
+      if (chatListEl && chatListEl.shadowRoot) {
+        const container = chatListEl.shadowRoot.getElementById(
+          'chat-list-container'
+        );
+        if (container) {
+          const chats = Array.from(container.children);
+          const target = chats.find((c) => c.userId === preferredId);
+          if (
+            target &&
+            chatScreen &&
+            typeof chatScreen.selectChat === 'function'
+          ) {
+            const userName = target.getUserName
+              ? target.getUserName()
+              : target.userName || 'Chat';
+            chatScreen.showScreen();
+            chatScreen.selectChat({ userName, userId: preferredId });
+          }
+        }
+      }
+    }
+  } catch {}
+};
+
+// Reconstrucción de lista de chats desde historial de la sesión
+function formatTime(ts) {
+  const d = new Date(ts || Date.now());
+  const h = d.getHours();
+  const m = d.getMinutes();
+  return (
+    String(h).padStart(2, '0') +
+    ':' +
+    String(m).padStart(2, '0') +
+    (h >= 12 ? ' pm' : ' am')
+  );
+}
+
+async function rebuildChatListFromHistory(sessionId) {
+  try {
+    const chatListEl = document.getElementById('wsc-chat-list');
+    if (!chatListEl) return;
+    // Limpiar lista actual
+    if (chatListEl.shadowRoot) {
+      const container = chatListEl.shadowRoot.getElementById(
+        'chat-list-container'
+      );
+      if (container) {
+        while (container.firstChild)
+          container.removeChild(container.firstChild);
+      }
+    }
+    // Limpiar message list y cache previa
+    window.sessionMessages = {};
+    const messageList = document.querySelector('wsc-message-list');
+    if (messageList && typeof messageList.clearMessages === 'function') {
+      messageList.clearMessages();
+    }
+    // Precargar todos los mensajes de la sesión y agruparlos en cache
+    try {
+      const all = await getMessagesBySession(sessionId);
+      for (const msg of all) {
+        const cid = String(msg.chatId);
+        if (!window.sessionMessages[cid]) window.sessionMessages[cid] = [];
+        window.sessionMessages[cid].push(msg);
+      }
+    } catch {}
+    const summary = await getChatsSummaryBySession(sessionId);
+    for (const item of summary) {
+      const alias =
+        item.lastTitle && item.lastTitle.trim()
+          ? item.lastTitle.trim()
+          : `Usuario ${String(item.chatId).slice(0, 6)}`;
+      const lastMessage =
+        item.lastType === 'file' ? `📎 ${item.lastMessage}` : item.lastMessage;
+      const ts = formatTime(item.lastCreatedAt);
+      // Agregar chat (ChatList evita duplicados por id)
+      chatListEl.addChat({
+        userName: alias,
+        id: item.chatId,
+        members: [],
+        lastMessage,
+        timestampLastMessage: ts,
+        unreadCount: 0,
+      });
+    }
+    // Seleccionar automáticamente el primer chat para mostrar sus mensajes
+    if (chatListEl.shadowRoot) {
+      const container = chatListEl.shadowRoot.getElementById(
+        'chat-list-container'
+      );
+      if (container && container.firstChild) {
+        const firstChat = container.firstChild;
+        const chatScreen = document.querySelector('wsc-chat-screen');
+        if (chatScreen && typeof chatScreen.selectChat === 'function') {
+          chatScreen.showScreen();
+          const userName = firstChat.getUserName
+            ? firstChat.getUserName()
+            : firstChat.userName || 'Chat';
+          chatScreen.selectChat({ userName, userId: firstChat.userId });
+        }
+      }
+    }
+  } catch (e) {
+    // fail silently
   }
 }
 
@@ -115,16 +442,34 @@ function connectWebSocket() {
                   id: clientId,
                 })
               );
+              // Mostrar badge de sesión activa
+              try {
+                const mainScreen = document.querySelector('wsc-main-screen');
+                if (
+                  mainScreen &&
+                  typeof mainScreen.setActiveSessionLabel === 'function'
+                ) {
+                  mainScreen.setActiveSessionLabel(window.clientAlias);
+                }
+              } catch {}
+              // Reconstruir lista y mensajes de la sesión activa (continúa sesión previa)
+              (async () => {
+                try {
+                  await rebuildChatListFromHistory(window.clientId);
+                } catch {}
+              })();
             } else {
               (async () => {
                 try {
-                  do {
-                    fromClientAlias =
-                      await modalInput.waitForInput('Enter your alias:');
-                  } while (!fromClientAlias);
-                  if (fromClientAlias) {
-                    fromClientAlias = toUpperCaseFirstLetter(fromClientAlias);
-                    window.clientAlias = fromClientAlias;
+                  // Primero, comprobar si hay sesiones guardadas
+                  const chosen = await promptSessionSelectionIfAny();
+                  if (chosen && chosen.sessionId) {
+                    // Usar ese id para la sesión local (DB) y alias guardado
+                    window.clientId = chosen.sessionId;
+                    window.clientAlias = chosen.alias;
+                    fromClientAlias = chosen.alias;
+                    selectedExistingSession = true;
+                    // Aún debemos identificarnos ante el servidor con el id actual asignado
                     websocket.send(
                       JSON.stringify({
                         type: 'alias',
@@ -132,6 +477,52 @@ function connectWebSocket() {
                         id: clientId,
                       })
                     );
+                    // Mostrar badge de sesión activa
+                    try {
+                      const mainScreen =
+                        document.querySelector('wsc-main-screen');
+                      if (
+                        mainScreen &&
+                        typeof mainScreen.setActiveSessionLabel === 'function'
+                      ) {
+                        mainScreen.setActiveSessionLabel(window.clientAlias);
+                      }
+                    } catch {}
+                    // Reconstruir lista de chats desde historial solo si es una sesión previa
+                    await rebuildChatListFromHistory(window.clientId);
+                  } else {
+                    // No hay selección; pedir alias nuevo
+                    do {
+                      fromClientAlias =
+                        await modalInput.waitForInput('Enter your alias:');
+                    } while (!fromClientAlias);
+                    if (fromClientAlias) {
+                      fromClientAlias = toUpperCaseFirstLetter(fromClientAlias);
+                      fromClientAlias = ensureUniqueAlias(fromClientAlias);
+                      window.clientAlias = fromClientAlias;
+                      // Guardar meta con el id asignado por el servidor
+                      upsertSessionMeta(clientId, fromClientAlias);
+                      websocket.send(
+                        JSON.stringify({
+                          type: 'alias',
+                          alias: fromClientAlias,
+                          id: clientId,
+                        })
+                      );
+                      // Mostrar badge de sesión activa (nueva sesión)
+                      try {
+                        const mainScreen =
+                          document.querySelector('wsc-main-screen');
+                        if (
+                          mainScreen &&
+                          typeof mainScreen.setActiveSessionLabel === 'function'
+                        ) {
+                          mainScreen.setActiveSessionLabel(window.clientAlias);
+                        }
+                      } catch {}
+                      // Reconstruir (lista vacía y mensaje list limpio para sesión nueva)
+                      await rebuildChatListFromHistory(clientId);
+                    }
                   }
                 } catch (err) {
                   console.error(err);
