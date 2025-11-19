@@ -1,3 +1,24 @@
+/**
+ * <wsc-chat>
+ * Componente que representa un resumen de un chat (usuario o grupo) en la lista.
+ * Muestra nombre, último mensaje, hora y contador de no leídos.
+ * Interacción principal: al hacer click notifica al `wsc-chat-screen` para seleccionar el chat.
+ *
+ * Props internas:
+ *  - userName: Nombre/alias mostrado.
+ *  - lastMessage: Último mensaje para vista previa.
+ *  - timestampLastMessage: Hora del último mensaje.
+ *  - unreadCount: Cantidad de mensajes no leídos.
+ *  - userId: Identificador único (cliente o grupo).
+ *  - members: Miembros del grupo si aplica.
+ * Métodos públicos:
+ *  - setUserName(name)
+ *  - setData({ userName, lastMessage, timestampLastMessage, unreadCount })
+ *  - setLastMessage(message)
+ *  - setTimestampLastMessage(timestamp)
+ *  - setUnreadCount(count)
+ *  - getUserName(), getLastMessage(), getTimestampLastMessage(), getUnreadCount()
+ */
 export default class Chat extends HTMLElement {
   constructor({
     userName = 'User Name',
@@ -51,7 +72,9 @@ export default class Chat extends HTMLElement {
           #chat-content {
             display: flex;
             flex-direction: column;
-            width: 100%;
+            max-width: 100%;
+            width: max-content;
+            margin-right: auto;
             justify-content: center;
             color: var(--text-color);
           }
@@ -78,13 +101,14 @@ export default class Chat extends HTMLElement {
             justify-content: center;
             align-items: center;
             width: max-content;
-            padding-right: 15px;
           }
+
 
           #chat-timestamp {
             font-size: 12px;
             opacity: 0.7;
             margin-bottom: 8px;
+            width: max-content;
             transform: scale(0.9);
           }
 
@@ -123,7 +147,7 @@ export default class Chat extends HTMLElement {
           </div>
           <div id="data-right">
             <div id="chat-timestamp">${this.timestampLastMessage}</div>
-            ${this.unreadCount > 0 ? `<div id="chat-unread-count">${this.unreadCount}</div>` : ''}
+            <div id="chat-unread-count" style="display: ${this.unreadCount > 0 ? 'inline-block' : 'none'}">${this.unreadCount}</div>
           </div>
         </div>
       `;
@@ -149,11 +173,21 @@ export default class Chat extends HTMLElement {
         }
       }
     });
+
     this.render();
   }
 
   setUserName(name) {
     this.userName = name;
+    this.render();
+  }
+
+  setData({ userName, lastMessage, timestampLastMessage, unreadCount }) {
+    if (userName !== undefined) this.userName = userName;
+    if (lastMessage !== undefined) this.lastMessage = lastMessage;
+    if (timestampLastMessage !== undefined)
+      this.timestampLastMessage = timestampLastMessage;
+    if (unreadCount !== undefined) this.unreadCount = unreadCount;
     this.render();
   }
 
@@ -176,6 +210,13 @@ export default class Chat extends HTMLElement {
     this.shadowRoot.getElementById('chat-name').textContent = this.userName;
     this.shadowRoot.getElementById('chat-last-message').textContent =
       this.lastMessage;
+    const tsEl = this.shadowRoot.getElementById('chat-timestamp');
+    if (tsEl) tsEl.textContent = this.timestampLastMessage;
+    const unreadEl = this.shadowRoot.getElementById('chat-unread-count');
+    if (unreadEl) {
+      unreadEl.textContent = this.unreadCount;
+      unreadEl.style.display = this.unreadCount > 0 ? 'inline-block' : 'none';
+    }
   }
 
   remove() {

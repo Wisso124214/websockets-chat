@@ -1,8 +1,27 @@
+/**
+ * <wsc-modal-input>
+ * Modal reutilizable para solicitar texto (prompt) o confirmación (confirm).
+ * Métodos clave:
+ *  - waitForInput(message?): Promise<string|null>
+ *  - waitForConfirm(message, okText?, cancelText?): Promise<boolean>
+ *  - changeVisibility(bool) / activate(message?)
+ *  - getInputValue()
+ * Internamente gestiona eventos de teclado (Escape / Enter) y limpieza de listeners.
+ */
 export default class ModalInput extends HTMLElement {
   constructor() {
     super();
     this.message = 'Enter your message:';
     this.inputValue = '';
+    this.mode = 'prompt'; // 'prompt' | 'confirm'
+    this.okText = 'Send';
+    this.cancelText = 'Cancel';
+    this._inputHandler = () => {
+      const inputElement = this.shadowRoot.getElementById('modal-input');
+      const inputValue = inputElement ? inputElement.value : '';
+      this.inputValue = inputValue;
+    };
+    this._submitHandler = () => {};
     this.attachShadow({ mode: 'open' });
     this.render();
   }
@@ -37,9 +56,8 @@ export default class ModalInput extends HTMLElement {
   }
 
   onSubmit() {
-    const inputElement = this.shadowRoot.getElementById('modal-input');
-    const inputValue = inputElement ? inputElement.value : '';
-    this.inputValue = inputValue;
+    if (this.mode === 'prompt') this._inputHandler();
+    this._submitHandler();
     this.changeVisibility(false);
   }
 
@@ -48,12 +66,10 @@ export default class ModalInput extends HTMLElement {
   }
 
   handleSubmit(resolve) {
-    const inputElement = this.shadowRoot.getElementById('modal-input');
-    const inputValue = inputElement ? inputElement.value : '';
-    this.inputValue = inputValue;
+    if (this.mode === 'prompt') this._inputHandler();
     this.changeVisibility(false);
     this.cleanup();
-    if (typeof resolve === 'function') resolve(inputValue);
+    if (typeof resolve === 'function') resolve(this.inputValue);
     if (this._escHandler)
       window.removeEventListener('keydown', this._escHandler);
   }
@@ -167,10 +183,10 @@ export default class ModalInput extends HTMLElement {
       <div id="modal-input-layer">
         <div id="modal-input-container">
           <label id="modal-label" for="modal-input">${this.message}</label>
-          <input id="modal-input" type="text" />
+          ${this.mode === 'prompt' ? '<input id="modal-input" type="text" />' : ''}
           <div id="modal-buttons">
-            <div id="modal-cancel">Cancel</div>
-            <div id="modal-submit">Send</div>
+            <div id="modal-cancel">${this.cancelText}</div>
+            <div id="modal-submit">${this.okText}</div>
           </div>
         </div>
       </div>
@@ -190,6 +206,9 @@ export default class ModalInput extends HTMLElement {
    */
   waitForInput(message) {
     if (message) this.message = message;
+    this.mode = 'prompt';
+    this.okText = 'Send';
+    this.cancelText = 'Cancel';
     this.render();
     this.changeVisibility(true);
 
@@ -223,14 +242,52 @@ export default class ModalInput extends HTMLElement {
     });
   }
 
-  disconnectedCallback() {}
-
-  attributeChangedCallback(name, oldValue, newValue) {
-    console.log(`Attribute ${name} changed from ${oldValue} to ${newValue}`);
+  /**
+   * Muestra un modal de confirmación sin input. Retorna true si acepta, false si cancela.
+   * @param {string} message
+   * @param {string} [okText='Aceptar']
+   * @param {string} [cancelText='Cancelar']
+   * @returns {Promise<boolean>}
+   */
+  waitForConfirm(message, okText = 'Aceptar', cancelText = 'Cancelar') {
+    if (message) this.message = message;
+    this.mode = 'confirm';
+    this.okText = okText;
+    this.cancelText = cancelText;
+    this.render();
+    this.changeVisibility(true);
+    return new Promise((resolve) => {
+      const submitBtn = this.shadowRoot.getElementById('modal-submit');
+      const cancelBtn = this.shadowRoot.getElementById('modal-cancel');
+      this._submitHandler = () => {
+        this.changeVisibility(false);
+        this.cleanup();
+        if (this._escHandler)
+          window.removeEventListener('keydown', this._escHandler);
+        resolve(true);
+      };
+      this._cancelHandler = () => {
+        this.changeVisibility(false);
+        this.cleanup();
+        if (this._escHandler)
+          window.removeEventListener('keydown', this._escHandler);
+        resolve(false);
+      };
+      if (submitBtn) submitBtn.addEventListener('click', this._submitHandler);
+      if (cancelBtn) cancelBtn.addEventListener('click', this._cancelHandler);
+      this._escHandler = (e) => {
+        if (e.key === 'Escape') this._cancelHandler();
+      };
+      window.addEventListener('keydown', this._escHandler);
+    });
   }
 
+  disconnectedCallback() {}
+
+  attributeChangedCallback() {}
+
   static get observedAttributes() {
-    return ['some-attribute'];
+    return [];
   }
 }
 

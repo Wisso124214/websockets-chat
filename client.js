@@ -1,102 +1,182 @@
+/**
+ * client.js
+ * ----------------------------------------------
+ * Cliente principal del chat WebSocket.
+ * - Establece la conexión WebSocket y gestiona eventos (open, message, close, error).
+ * - Solicita al usuario un alias y lo envía al servidor.
+ * - Administra la creación y actualización visual de chats (usuarios y grupos).
+ * - Persiste mensajes (texto y archivos) en IndexedDB para cada sesión/Chat.
+ * - Expone una pequeña API global para operaciones con grupos (crear, añadir, remover, eliminar).
+ *
+ * Principios de legibilidad aplicados:
+ * - Nombres descriptivos y consistentes (camelCase para funciones/variables).
+ * - Comentarios orientados al "por qué" y organización por secciones.
+ * - Uso de constantes para valores configurables (host/puerto).
+ * - Estructura simple de switch por tipo de mensaje recibido.
+ */
 import MainScreen from './screens/mainScreen/MainScreen.js';
 import ModalInput from './components/modalInput/modalInput.js';
 import ChatScreen from './screens/chatScreen/ChatScreen.js';
+import { saveMessage } from './components/db/indexedDB.js';
 
-// Usar solo el modal ya presente en el DOM
-const modalInput = document.querySelector('wsc-modal-input');
-// const MAX_PAYLOAD_SIZE = 500 * 1024 * 1024; // 500 MB
-const MAX_PAYLOAD_SIZE = 1024 * 1024 * 5; // 5 MB
-const wsUri = `ws://${location.hostname}/`;
+// === CONFIGURACIÓN BÁSICA DE CONEXIÓN ===
+// Para desarrollo local con Live Server (HTTP en 127.0.0.1:5500)
+// el servidor WebSocket corre por separado.
+const WS_PORT = 8081;
+const WS_HOST = location.hostname || '127.0.0.1';
+const wsUri = `ws://${WS_HOST}:${WS_PORT}/`;
 let websocket = null;
-let pingInterval;
 
-// Modificar para incluir un ID de destino
-let clientId = null;
-let clientAlias = null;
-let clientSelected = { id: null, alias: null };
+const modalInput = document.querySelector('wsc-modal-input');
+
+window.clientId = null;
 let date = null;
+let fromClientAlias;
 
-const logElement = document.querySelector('#log');
-function log(text) {
-  console.log(text);
-  // if (logElement) {
-  //   logElement.innerText = `${logElement.innerText}${text}\n`;
-  //   logElement.scrollTop = logElement.scrollHeight;
-  // }
+// === RECONEXIÓN AUTOMÁTICA ===
+// Estrategia: backoff exponencial simple (1s, 2s, 4s, ... máx 30s).
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY = 30000; // 30s
+let manualClose = false; // Para distinguir cierre intencional (navegación) de caída.
+let reconnectTimeoutId = null;
+
+function scheduleReconnect() {
+  if (manualClose) return; // No reconectar si el usuario salió.
+  if (reconnectTimeoutId) return; // Ya programado.
+  const delay = Math.min(
+    1000 * Math.pow(2, reconnectAttempts),
+    MAX_RECONNECT_DELAY
+  );
+  reconnectAttempts += 1;
+  reconnectTimeoutId = setTimeout(() => {
+    reconnectTimeoutId = null;
+    connectWebSocket();
+  }, delay);
 }
 
-// Nuevo: referencias al input y botón
-const messageInput = document.querySelector('#messageInput');
-const sendBtn = document.querySelector('#sendBtn');
-const fileInput = document.querySelector('#fileInput');
-const downloadContainer = document.querySelector('#downloadContainer');
-
-// Crear un div para mostrar el Alias del cliente
-const clientAliasElement = document.getElementById('clientAliasDisplay');
-if (clientAliasElement) {
-  clientAliasElement.innerText = 'Your alias: ';
-  clientAliasElement.style.margin = '10px 0';
-  document.body.insertBefore(clientAliasElement, logElement);
+function resetReconnectState() {
+  reconnectAttempts = 0;
+  if (reconnectTimeoutId) {
+    clearTimeout(reconnectTimeoutId);
+    reconnectTimeoutId = null;
+  }
 }
 
-// Open the websocket when the page is shown
-window.addEventListener('pageshow', () => {
-  log('OPENING');
-
+// Conexión principal encapsulada para permitir reconexiones.
+function connectWebSocket() {
+  // Evitar múltiples conexiones simultáneas.
+  if (websocket && websocket.readyState === WebSocket.OPEN) return;
   websocket = new WebSocket(wsUri);
   window.websocket = websocket;
-  window.clientSelected = clientSelected;
 
   websocket.addEventListener('open', () => {
-    log('CONNECTED');
+    resetReconnectState();
+    // Si ya tenemos alias previo, reenviarlo sin molestar al usuario.
+    if (window.clientAlias && window.clientId) {
+      try {
+        websocket.send(
+          JSON.stringify({
+            type: 'alias',
+            alias: window.clientAlias,
+            id: window.clientId,
+          })
+        );
+      } catch (err) {}
+    }
   });
 
   websocket.addEventListener('close', () => {
-    log('DISCONNECTED');
+    // Intentar reconexión si no es cierre manual.
+    if (!manualClose) scheduleReconnect();
+  });
+
+  websocket.addEventListener('error', () => {
+    // Forzar intento de reconexión tras error (si no cierre manual).
+    if (!manualClose) scheduleReconnect();
   });
 
   websocket.addEventListener('message', (e) => {
     try {
       const data = JSON.parse(e.data);
-      console.log('Received data:', data);
       if (data) {
         switch (data.type) {
           case 'id':
             clientId = data.id;
-
-            // Enviar alias al servidor al abrir la conexión
-            (async () => {
-              try {
-                // do {
-                //   clientAlias = await modalInput.waitForInput('Enter your alias:');
-                // } while (!clientAlias);
-                clientAlias = 'alias';
-                if (clientAlias) {
-                  clientAlias = toUpperCaseFirstLetter(clientAlias);
-                  console.log(`Hello ${clientAlias}`);
-                  if (clientAliasElement)
-                    clientAliasElement.innerText = `Your alias: ${clientAlias}`;
-                  websocket.send(
-                    JSON.stringify({
-                      type: 'alias',
-                      alias: clientAlias,
-                      id: clientId,
-                    })
-                  );
+            try {
+              window.clientId = clientId;
+            } catch {}
+            // Alias previo ya conocido => reenviar; si no existe => pedirlo.
+            if (window.clientAlias) {
+              fromClientAlias = window.clientAlias;
+              websocket.send(
+                JSON.stringify({
+                  type: 'alias',
+                  alias: window.clientAlias,
+                  id: clientId,
+                })
+              );
+            } else {
+              (async () => {
+                try {
+                  do {
+                    fromClientAlias =
+                      await modalInput.waitForInput('Enter your alias:');
+                  } while (!fromClientAlias);
+                  if (fromClientAlias) {
+                    fromClientAlias = toUpperCaseFirstLetter(fromClientAlias);
+                    window.clientAlias = fromClientAlias;
+                    websocket.send(
+                      JSON.stringify({
+                        type: 'alias',
+                        alias: fromClientAlias,
+                        id: clientId,
+                      })
+                    );
+                  }
+                } catch (err) {
+                  console.error(err);
                 }
-              } catch (err) {
-                console.error(err);
-              }
-            })();
+              })();
+            }
             break;
 
           case 'message':
-            log(`RECEIVED from ${data.from}: ${data.payload}`);
-            // Agregar mensaje recibido al componente wsc-message-list
+            // Mensaje de texto entrante: agregar a componente y persistir.
             const messageListRecv = document.querySelector('wsc-message-list');
             date = new Date();
             if (messageListRecv) {
+              // Determinar el chat a actualizar sin mezclar tipos:
+              // 1. Si es mensaje de grupo (data.groupId presente) usar el id del grupo.
+              // 2. Si es mensaje directo entrante usar id_from (emisor).
+              // 3. Fallbacks solo si hiciera falta (no debería darse normalmente).
+              let chatId;
+              if (data.groupId) {
+                chatId = data.groupId;
+              } else if (data.id_from) {
+                chatId = data.id_from; // mensaje directo entrante
+              } else if (data.id_target && data.id_target !== clientId) {
+                chatId = data.id_target; // caso excepcional
+              } else {
+                chatId =
+                  data.id_from ||
+                  data.groupId ||
+                  data.id_target ||
+                  'desconocido';
+              }
+              // Persistir en IndexedDB
+              try {
+                saveMessage({
+                  sessionId: window.clientId,
+                  chatId,
+                  direction: 'in',
+                  type: 'text',
+                  title: data.from || 'Desconocido',
+                  text: data.payload,
+                  createdAt: Date.now(),
+                });
+              } catch {}
               messageListRecv.addMessage({
+                chatId,
                 title: data.from || 'Desconocido',
                 text: data.payload,
                 timestamp:
@@ -111,40 +191,69 @@ window.addEventListener('pageshow', () => {
             break;
 
           case 'newClient':
+            // Nuevo cliente conectado: crear botón de chat (si no es uno mismo)
             const newClientAlias = `${data.alias || 'N/A'}`;
-            log(`New client connected: ${newClientAlias}`);
-            log(`-- Client ID: ${data.id}`);
             if (data.id !== clientId)
               newChatButton({ id: data.id, alias: newClientAlias });
             break;
 
           case 'clientsList':
+            // Lista inicial de clientes: poblar chats y solicitar grupos.
             data.clients.forEach(({ id, alias }) => {
               if (id !== clientId) newChatButton({ id, alias });
             });
             websocket.send(
               JSON.stringify({
                 type: 'reqGroups',
-                alias: clientAlias,
+                alias: fromClientAlias,
                 id: clientId,
               })
             );
             break;
 
           case 'clientDisconnected':
-            log(`Client disconnected: ${data.alias}`);
-            log(`-- Client ID: ${data.id}`);
+            // Eliminación visual de un cliente que se desconecta.
             deleteClient(data.id);
             break;
 
           case 'groupsList':
-            console.log('Groups received:', data.groups);
+            // Recibir listado completo de grupos para renderizar.
             data.groups.forEach(({ id, alias, members }) => {
               newChatButton({ id, alias, members });
             });
             break;
 
+          case 'groupCreated': {
+            // Grupo nuevo creado y confirmado por el servidor.
+            const { group } = data;
+            if (group)
+              newChatButton({
+                id: group.id,
+                alias: group.alias,
+                members: group.members,
+              });
+            break;
+          }
+          case 'groupUpdated': {
+            // Actualización de miembros/nombre de grupo.
+            const { group } = data;
+            if (group)
+              newChatButton({
+                id: group.id,
+                alias: group.alias,
+                members: group.members,
+              });
+            break;
+          }
+          case 'groupDeleted': {
+            // Eliminación de grupo: remover del listado local.
+            const { groupId } = data;
+            if (groupId) deleteClient(groupId);
+            break;
+          }
+
           case 'attachment':
+            // Archivo entrante (binario): convertir a Blob, persistir y mostrar.
             const blob = new Blob([new Uint8Array(data.data)], {
               type: 'application/octet-stream',
             });
@@ -153,7 +262,37 @@ window.addEventListener('pageshow', () => {
             const messageListFile = document.querySelector('wsc-message-list');
             date = new Date();
             if (messageListFile) {
+              // Misma lógica de segregación que en mensajes de texto
+              let chatId;
+              if (data.groupId) {
+                chatId = data.groupId;
+              } else if (data.id_from) {
+                chatId = data.id_from;
+              } else if (data.id_target && data.id_target !== clientId) {
+                chatId = data.id_target;
+              } else {
+                chatId =
+                  data.id_from ||
+                  data.groupId ||
+                  data.id_target ||
+                  'desconocido';
+              }
+              // Persistir archivo en IndexedDB
+              try {
+                saveMessage({
+                  sessionId: window.clientId,
+                  chatId,
+                  direction: 'in',
+                  type: 'file',
+                  title: data.from || 'Desconocido',
+                  text: '',
+                  fileName: data.filename || 'Archivo',
+                  blob,
+                  createdAt: Date.now(),
+                });
+              } catch {}
               messageListFile.addMessage({
+                chatId,
                 title: data.from || 'Desconocido',
                 timestamp:
                   date.getHours().toString().padStart(2, '0') +
@@ -167,81 +306,68 @@ window.addEventListener('pageshow', () => {
                 url,
               });
             }
-            log(
-              `File received: ${data.filename || 'file'} from ${data.from || 'unknown'}`
-            );
             break;
 
           default:
-            log(`Unknown message: ${JSON.stringify(data)}`);
+            // unknown message type; ignore
             break;
         }
         return;
       }
     } catch (err) {
-      log(`Error parsing message: ${err.message}`); // Registrar errores de parseo
-      log(`RECEIVED: ${e.data}`);
+      // Silenciar errores de parseo en consola pública
     }
   });
+}
 
-  websocket.addEventListener('error', (e) => {
-    log(`ERROR: ${e.data}`);
-  });
-
-  // Nuevo: enviar contenido del input al presionar el botón
-  sendBtn?.addEventListener('click', () => {
-    if (!websocket || websocket.readyState !== WebSocket.OPEN) {
-      log('No conectado al servidor');
-      return;
-    }
-    const text = messageInput.value;
-    const targetId = clientSelected.id;
-    if (!text) return;
-    if (targetId) {
-      websocket.send(
-        JSON.stringify({ type: 'message', payload: text, targetId })
-      );
-      log(`SENT to ${clientSelected.alias}: ${text}`);
-    } else {
-      websocket.send(JSON.stringify({ type: 'broadcast', payload: text }));
-      log(`SENT broadcast: ${text}`);
-    }
-    // Agregar mensaje enviado al componente wsc-message-list
-    const messageListSend = document.querySelector('wsc-message-list');
-    if (messageListSend) {
-      messageListSend.addMessage({
-        title: 'Tú',
-        text: text,
-        timestamp: new Date().toLocaleTimeString(),
-        isIncoming: false,
-        type: 'text',
-      });
-    }
-    messageInput.value = '';
-  });
-
-  fileInput?.addEventListener('change', (e) => {
-    if (fileInput.files.length > 0) {
-      uploadFile(e, websocket, clientSelected.id);
-      fileInput.value = '';
-    }
-  });
+// === INICIALIZACIÓN ===
+// Apertura cuando la página se muestra.
+window.addEventListener('pageshow', () => {
+  manualClose = false;
+  connectWebSocket();
 });
 
-// Close the websocket when the user leaves.
+// === LIMPIEZA DE LA CONEXIÓN ===
+// Cerrar el WebSocket cuando el usuario abandona la página.
 window.addEventListener('pagehide', () => {
+  manualClose = true;
   if (websocket) {
-    log('CLOSING');
-    websocket.close();
+    try {
+      websocket.close();
+    } catch {}
     websocket = null;
-    window.clearInterval(pingInterval);
   }
+  resetReconnectState();
 });
 
+// API opcional para forzar reconexión manual desde consola.
+window.forceReconnect = () => {
+  manualClose = false;
+  if (websocket) {
+    try {
+      websocket.close();
+    } catch {}
+    websocket = null;
+  }
+  connectWebSocket();
+};
+
+// === UTILIDADES ===
+/**
+ * Capitaliza la primera letra de una cadena.
+ * @param {string} string Cadena a transformar.
+ * @returns {string} Cadena con primera letra en mayúscula.
+ */
 const toUpperCaseFirstLetter = (string) => {
   return string.slice(0, 1).toUpperCase() + string.slice(1);
 };
 
+// === GESTIÓN DE CHATS (CREACIÓN DINÁMICA) ===
+/**
+ * Crea (si no existe) un botón de chat para un usuario o grupo.
+ * Maneja espera por el componente `wsc-chat-list` si aún no está en el DOM.
+ * @param {{id:string, alias:string, members?:string[]}} clientSelected Datos del cliente/grupo.
+ */
 const newChatButton = (clientSelected) => {
   const { id, alias, members = [] } = clientSelected;
   const chat = document.querySelector('wsc-chat-list');
@@ -271,6 +397,11 @@ const newChatButton = (clientSelected) => {
   }
 };
 
+// === ELIMINACIÓN DE CHAT ===
+/**
+ * Elimina visualmente un chat por su id.
+ * @param {string} id Identificador del cliente o grupo.
+ */
 const deleteClient = (id) => {
   const chatList = document.querySelector('wsc-chat-list');
   if (chatList && typeof chatList.deleteChatById === 'function') {
@@ -278,115 +409,27 @@ const deleteClient = (id) => {
   }
 };
 
-const getPayloadDecoded = (frame, firstIndexAfterPayloadLength) => {
-  const mask = frame.slice(
-    firstIndexAfterPayloadLength,
-    firstIndexAfterPayloadLength + 4
+// Antiguas utilidades de framing y carga de archivo eliminadas por no usarse
+
+// === API GLOBAL PARA OPERACIONES DE GRUPO ===
+// Se expone en window para interacción rápida desde otros componentes o consola.
+window.createGroup = (alias) => {
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+  websocket.send(JSON.stringify({ type: 'createGroup', groupAlias: alias }));
+};
+window.addClientToGroup = (groupId, targetId) => {
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+  websocket.send(
+    JSON.stringify({ type: 'addClientToGroup', groupId, targetId })
   );
-  const encodedPayload = frame.slice(firstIndexAfterPayloadLength + 4);
-  // XOR each 4-byte sequence in the payload with the bitmask
-  const decodedPayload = encodedPayload.map((byte, i) => byte ^ mask[i % 4]);
-  return decodedPayload;
 };
-
-const generateFrame = (payload, options) => {
-  const { isEnd = true, type = 'text' } = options ? options : {};
-  const payloadLength = payload.length;
-  const frame = [];
-  let firstByte = 0b00000000;
-
-  if (isEnd) {
-    firstByte |= 0b10000000; // Set FIN bit
-  }
-  if (type === 'text') {
-    firstByte |= 0b00000001; // Set opcode to 0x1 (text)
-  } else {
-    firstByte |= 0b00000010; // Set opcode to 0x2 (binary)
-  }
-
-  frame.push(firstByte);
-
-  if (payloadLength <= 125) {
-    frame.push(0b10000000 | payloadLength); // MASK bit set to 1
-  } else if (payloadLength <= 65535) {
-    frame.push(0b10000000 | 126); // MASK bit set to 1, extended payload length indicator
-    frame.push((payloadLength >> 8) & 0xff);
-    frame.push(payloadLength & 0xff);
-  } else {
-    frame.push(0b10000000 | 127); // MASK bit set to 1, extended payload length indicator
-    for (let i = 7; i >= 0; i--) {
-      frame.push((payloadLength >> (i * 8)) & 0xff);
-    }
-  }
-
-  const mask = generateMask();
-  frame.push(...mask);
-
-  for (let i = 0; i < payloadLength; i++) {
-    frame.push(payload.charCodeAt(i) ^ mask[i % 4]); // Apply mask to payload
-  }
-
-  return Uint8Array.from(frame);
+window.remClientToGroup = (groupId, targetId) => {
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+  websocket.send(
+    JSON.stringify({ type: 'remClientToGroup', groupId, targetId })
+  );
 };
-
-const generateMask = () => {
-  return [
-    Math.floor(Math.random() * 256),
-    Math.floor(Math.random() * 256),
-    Math.floor(Math.random() * 256),
-    Math.floor(Math.random() * 256),
-  ];
-};
-
-// getFirstIndexAfterPayloadLength (gFIAPL)
-const gFIAPL = (frame) => {
-  const secondByte = frame[1];
-  let payloadLength = secondByte & 0b01111111;
-  let index = 2;
-  if (payloadLength === 126) {
-    index += 2;
-  } else if (payloadLength === 127) {
-    index += 8;
-  }
-  return index;
-};
-
-const uploadFile = (e, socket, to) => {
-  const file = e.target.files[0];
-
-  if (!file) {
-    return;
-  }
-  if (file.size > MAX_PAYLOAD_SIZE) {
-    alert('File should be smaller than 1MB');
-    return;
-  }
-
-  const reader = new FileReader();
-
-  reader.onload = (e) => {
-    const rawData = e.target.result;
-    socket.send(
-      JSON.stringify({
-        type: 'attachment',
-        data: Array.from(new Uint8Array(rawData)),
-        filename: file.name,
-        targetId: to,
-      })
-    );
-    log(`File sent: ${file.name}`);
-  };
-
-  reader.readAsArrayBuffer(file);
-};
-
-const encodePayload = (payload, options) => {
-  const frame = generateFrame(payload, options);
-  console.log(getPayloadDecoded(frame, gFIAPL(frame)));
-  return getPayloadDecoded(frame, gFIAPL(frame));
-};
-
-const decodeTextPayload = (encodedPayload, options) => {
-  const decoded = new TextDecoder().decode(encodedPayload);
-  return decoded;
+window.delGroup = (groupId) => {
+  if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+  websocket.send(JSON.stringify({ type: 'delGroup', groupId }));
 };

@@ -1,5 +1,15 @@
 import Chat from '../chat/Chat.js';
 
+/**
+ * <wsc-chat-list>
+ * Contenedor de elementos `<wsc-chat>`.
+ * Responsabilidades:
+ *  - Renderizar lista dinámica de chats (usuarios / grupos).
+ *  - Evitar duplicados por id.
+ *  - Exponer operaciones básicas: addChat, deleteChatById, updateChat, deleteChat.
+ *  - Alternar visibilidad (hideList / showList) según pantallas.
+ */
+
 export default class ChatList extends HTMLElement {
   constructor() {
     super();
@@ -47,6 +57,11 @@ export default class ChatList extends HTMLElement {
       unreadCount,
     } = clientData;
 
+    // Evitar duplicados por id
+    const existing = Array.from(
+      this.shadowRoot.getElementById('chat-list-container').children
+    ).find((c) => c.userId === id);
+    if (existing) return;
     const chat = new Chat({
       userName,
       userId: id,

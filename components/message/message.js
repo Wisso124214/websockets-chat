@@ -1,3 +1,20 @@
+/**
+ * <wsc-message>
+ * Representa un mensaje individual (texto o archivo) dentro de un chat.
+ * Características:
+ *  - Diferencia mensajes entrantes vs salientes (estilos y ocultar título propio).
+ *  - Soporta truncado/expandir texto largo (toggleExpand).
+ *  - Manejo de blobs para archivos con botón de descarga y metadatos (tamaño/extensión).
+ *  - Limpieza de recursos URL al desconectarse.
+ * Props relevantes:
+ *  - title: Alias del emisor (para grupos) o "Tú" si saliente.
+ *  - text: Contenido textual (si type==='text').
+ *  - timestamp: Hora formateada del mensaje.
+ *  - isIncoming: Booleano de dirección.
+ *  - type: 'text' | 'file'.
+ *  - fileName, blob, url: Datos del archivo si aplica.
+ *  - chat: 'personal' | 'group' usado para mostrar título.
+ */
 export default class Message extends HTMLElement {
   constructor({
     title = '',
@@ -5,6 +22,7 @@ export default class Message extends HTMLElement {
     timestamp = '',
     isIncoming = false,
     type = 'text',
+    chat = 'personal',
     fileName = '',
     blob = null,
     url = '',
@@ -22,6 +40,7 @@ export default class Message extends HTMLElement {
     this.initialCharLimit = 1100; // caracteres iniciales a mostrar
     this.incrementChars = 1000; // caracteres adicionales por cada clic en "ver más"
     this.currentCharLimit = this.initialCharLimit;
+    this.chat = chat; // 'personal' | 'group'
 
     this.attachShadow({ mode: 'open' });
     this.styleTemplate = `
@@ -36,6 +55,7 @@ export default class Message extends HTMLElement {
             border-radius: 10px;
             padding: 15px 22px;
             margin: 8px 0;
+            width: max-content;
             max-width: 65%;
             text-align: left;
           }
@@ -83,7 +103,7 @@ export default class Message extends HTMLElement {
           }
 
           #message-content {
-            width: 95%;
+            width: 100%;
             margin: 0 auto;
           }
 
@@ -305,7 +325,7 @@ export default class Message extends HTMLElement {
       `
       <div id="message-container-background">
         <div id="message-container" class="${this.isIncoming ? 'incoming' : 'outgoing'}">
-          <div id="message-title">${this.title}</div>
+          ${this.chat !== 'personal' ? `<div id='message-title'>${this.title}</div>` : ''}
           <div id="message-content" class="${this.type}">
             ${
               this.type === 'text'

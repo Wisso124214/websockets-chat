@@ -6,32 +6,30 @@ class MyCustomElement extends HTMLElement {
     // Initialize shadow DOM and add content
     this.attachShadow({ mode: 'open' }); // or 'closed'
     this.shadowRoot.innerHTML = `
-                <style>
-                    /* Component-specific styles */
-                    div {
-                        padding: 10px;
-                        border: 1px solid blue;
-                    }
-                </style>
-                <div>Hello from MyCustomElement!</div>
-            `;
+        <style>
+            /* Component-specific styles */
+            div {
+                padding: 10px;
+                border: 1px solid blue;
+            }
+        </style>
+        <div>Hello from MyCustomElement!</div>
+    `;
   }
 
   // Lifecycle callbacks (optional)
   connectedCallback() {
-    console.log('MyCustomElement added to the DOM');
+    // no-op
   }
 
   disconnectedCallback() {
-    console.log('MyCustomElement removed from the DOM');
+    // no-op
   }
 
-  attributeChangedCallback(name, oldValue, newValue) {
-    console.log(`Attribute ${name} changed from ${oldValue} to ${newValue}`);
-  }
+  attributeChangedCallback() {}
 
   static get observedAttributes() {
-    return ['some-attribute']; // Attributes to observe for changes
+    return []; // No attributes observed
   }
 }
 

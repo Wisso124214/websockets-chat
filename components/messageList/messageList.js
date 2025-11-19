@@ -1,5 +1,50 @@
 import Message from '../message/Message.js';
 
+/**
+ * <wsc-message-list>
+ * Panel que muestra los mensajes del chat seleccionado.
+ * Responsabilidades:
+ *  - Mantener scroll al fondo automáticamente usando MutationObserver.
+ *  - Reproducir notificaciones (audio / beep) diferenciando chat activo vs otros.
+ *  - addMessage decide si renderizar según chat actualmente seleccionado para evitar mezcla.
+ *  - clearMessages para reiniciar vista.
+ *  - Diferenciar tipo de mensaje (texto/archivo) delegando a `<wsc-message>`.
+ */
+
+// Pre-carga de audios de notificación.
+// "current" = mensaje entrante en el chat abierto actualmente.
+// "other" = mensaje entrante para otro chat (no seleccionado).
+const incomingAudio = new Audio('./assets/message-incoming.mp3');
+incomingAudio.preload = 'auto';
+incomingAudio.volume = 0.85;
+const otherAudio = new Audio('./assets/notification.mp3');
+otherAudio.preload = 'auto';
+otherAudio.volume = 0.75;
+
+function playNotification(kind) {
+  const audio = kind === 'current' ? incomingAudio : otherAudio;
+  // Intentar reproducir; si falla (autoplay), hacer un beep de fallback.
+  audio.currentTime = 0; // reiniciar para reproducir múltiples veces seguidas
+  audio.play().catch(() => {
+    // Fallback mínimo usando Web Audio si el usuario ya otorgó interacción.
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = kind === 'current' ? 660 : 440;
+      osc.type = 'sine';
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.4);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.4);
+    } catch (_) {}
+  });
+}
+
 export default class MessageList extends HTMLElement {
   constructor() {
     super();
@@ -96,6 +141,8 @@ export default class MessageList extends HTMLElement {
    * @param {Object} options { title, text, timestamp, isIncoming, type, fileName, blob }
    */
   addMessage({
+    id_target,
+    chatId,
     title,
     text,
     timestamp,
@@ -103,13 +150,92 @@ export default class MessageList extends HTMLElement {
     type = 'text',
     fileName,
     blob,
+    id,
   }) {
+    // Obtener los chats dentro del Shadow DOM de wsc-chat-list
+    const chatListEl = document.getElementById('wsc-chat-list');
+    let chat = null;
+    const targetChatId =
+      chatId || (id_target && id_target.startsWith('group') ? id_target : null);
+    if (chatListEl && chatListEl.shadowRoot) {
+      const container = chatListEl.shadowRoot.getElementById(
+        'chat-list-container'
+      );
+      console.log('container', container);
+      if (container) {
+        const chats = Array.from(container.children);
+        console.log('chats', chats);
+        if (targetChatId) {
+          for (const ch of chats) {
+            console.log(
+              'try match',
+              ch.userId,
+              targetChatId,
+              ch.userId === targetChatId
+            );
+            if (ch.userId === targetChatId) {
+              chat = ch;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    console.log('chat', chat);
+    if (chat) {
+      // Evitar contar como no leído si el chat está seleccionado actualmente
+      const chatScreen = document.querySelector('wsc-chat-screen');
+      const selectedId =
+        chatScreen && chatScreen.selectedClient
+          ? chatScreen.selectedClient.id
+          : null;
+      const isSelected =
+        selectedId && targetChatId && selectedId === targetChatId;
+      const newUnread = chat.unreadCount + (isIncoming && !isSelected ? 1 : 0);
+      chat.setData({
+        lastMessage: type === 'text' ? text : `Archivo: ${fileName}`,
+        timestampLastMessage: timestamp,
+        unreadCount: newUnread,
+      });
+
+      // Mover el chat al tope por actividad reciente
+      const chatListEl = document.getElementById('wsc-chat-list');
+      if (chatListEl && chatListEl.shadowRoot) {
+        const container = chatListEl.shadowRoot.getElementById(
+          'chat-list-container'
+        );
+        if (container && chat.parentElement === container) {
+          container.prepend(chat);
+        }
+      }
+      // Solo renderizar el mensaje en el panel si es el chat seleccionado
+      // Reproducir sonido según si el mensaje entra al chat abierto o a otro.
+      if (isIncoming) {
+        playNotification(isSelected ? 'current' : 'other');
+      }
+      if (!isSelected) {
+        return; // No renderizar mensajes de otros chats aquí
+      }
+    } else {
+      // Si no encontramos chat destino, no renderizar en el panel global
+      // para evitar mezclar mensajes entre chats.
+      if (isIncoming) {
+        playNotification('other');
+      }
+      return;
+    }
+
     // Si el contenedor no está cargado, cargarlo y esperar
     if (!this.messageContainer) {
       this.loadMessageContainer();
     }
     // Esperar a que messageContainer esté disponible usando la promesa
     this._containerReady.then(() => {
+      const chatType =
+        targetChatId && String(targetChatId).startsWith('group')
+          ? 'group'
+          : 'personal';
       const msg = new Message({
         title,
         text,
@@ -118,9 +244,11 @@ export default class MessageList extends HTMLElement {
         type,
         fileName,
         blob,
+        chat: chatType,
       });
       this.messageContainer.appendChild(msg);
       msg.render();
+      // El sonido para mensajes del chat abierto ya se reproduce antes del render.
     });
   }
 
@@ -144,12 +272,10 @@ export default class MessageList extends HTMLElement {
     }
   }
 
-  attributeChangedCallback(name, oldValue, newValue) {
-    console.log(`Attribute ${name} changed from ${oldValue} to ${newValue}`);
-  }
+  attributeChangedCallback() {}
 
   static get observedAttributes() {
-    return ['some-attribute'];
+    return [];
   }
 }
 

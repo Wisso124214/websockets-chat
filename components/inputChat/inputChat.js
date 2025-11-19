@@ -1,4 +1,17 @@
-import MessageList from '../messageList/MessageList.js';
+// Side-effect import innecesario removido: MessageList ya se registra vía ChatScreen
+/**
+ * <wsc-input-chat>
+ * Barra inferior de entrada de mensajes y envío de archivos.
+ * Funcionalidades:
+ *  - Envío de texto (Enter / click) al chat seleccionado.
+ *  - Adjuntar archivos: lectura como ArrayBuffer y envío como attachment.
+ *  - Persistencia de mensajes salientes (texto/archivo) en IndexedDB.
+ *  - Mantiene focus fácil vía método público focus().
+ * Notas:
+ *  - Usa `window.websocket` y `wsc-chat-screen.selectedClient` para determinar destino.
+ *  - Limita tamaño de archivo (500MB) con validación previa.
+ */
+import { saveMessage } from '../db/indexedDB.js';
 
 export default class InputChat extends HTMLElement {
   constructor() {
@@ -150,12 +163,14 @@ export default class InputChat extends HTMLElement {
         let websocket = window.websocket;
         let chatScreen = document.querySelector('wsc-chat-screen');
         let clientSelected = chatScreen?.selectedClient || { id: null };
+        const targetId = clientSelected.id || 'groupAll';
         websocket?.send(
           JSON.stringify({
             type: 'attachment',
             data: Array.from(new Uint8Array(rawData)),
             filename: file.name,
-            targetId: clientSelected.id,
+            targetId,
+            from: window.clientAlias ?? 'nullOnAttachmentClientInput',
           })
         );
         // Opcional: mostrar en el chat
@@ -165,8 +180,24 @@ export default class InputChat extends HTMLElement {
         });
         const url = URL.createObjectURL(blob);
         const date = new Date();
+        // Persistir en IndexedDB como saliente
+        try {
+          saveMessage({
+            sessionId: window.clientId,
+            chatId: targetId,
+            direction: 'out',
+            type: 'file',
+            title: 'Tú',
+            text: '',
+            fileName: file.name,
+            blob,
+            createdAt: Date.now(),
+          });
+        } catch {}
         if (messageListFile) {
+          // Mostrar archivo únicamente en el chat actualmente seleccionado
           messageListFile.addMessage({
+            chatId: clientSelected.id,
             title: 'Tú',
             timestamp:
               date.getHours().toString().padStart(2, '0') +
@@ -198,25 +229,33 @@ export default class InputChat extends HTMLElement {
 
       if (!websocket || websocket.readyState !== 1) {
         // 1 = OPEN
-        console.log('No conectado al servidor');
         return;
       }
-      const targetId = clientSelected.id;
+      const targetId = clientSelected.id || 'groupAll';
       if (targetId) {
         websocket.send(
           JSON.stringify({ type: 'message', payload: message, targetId })
         );
-        console.log(`SENT to ${clientSelected.alias}: ${message}`);
-      } else {
-        websocket.send(JSON.stringify({ type: 'broadcast', payload: message }));
-        console.log(`SENT broadcast: ${message}`);
       }
 
-      // Agregar mensaje enviado al componente wsc-message-list
+      // Guardar y agregar mensaje enviado al componente wsc-message-list
+      try {
+        saveMessage({
+          sessionId: window.clientId,
+          chatId: targetId,
+          direction: 'out',
+          type: 'text',
+          title: 'Tú',
+          text: message,
+          createdAt: Date.now(),
+        });
+      } catch {}
       const messageListSend = document.querySelector('wsc-message-list');
       if (messageListSend) {
         const date = new Date();
+        // Mostrar mensaje propio únicamente en el chat actualmente seleccionado
         messageListSend.addMessage({
+          chatId: targetId || null,
           title: 'Tú',
           text: message,
           timestamp:
@@ -241,12 +280,10 @@ export default class InputChat extends HTMLElement {
 
   disconnectedCallback() {}
 
-  attributeChangedCallback(name, oldValue, newValue) {
-    console.log(`Attribute ${name} changed from ${oldValue} to ${newValue}`);
-  }
+  attributeChangedCallback() {}
 
   static get observedAttributes() {
-    return ['some-attribute'];
+    return [];
   }
 }
 

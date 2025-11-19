@@ -1,5 +1,14 @@
 import ChatList from '../../components/chatList/ChatList.js';
 
+/**
+ * <wsc-main-screen>
+ * Pantalla principal inicial del chat.
+ * Muestra el título y controla la visibilidad de la lista de chats.
+ * Métodos:
+ *  - showScreen(): Hace visible la pantalla y muestra la lista de chats.
+ *  - hideScreen(): Oculta la pantalla y la lista de chats.
+ */
+
 export default class MainScreen extends HTMLElement {
   constructor() {
     super();

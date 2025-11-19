@@ -23,11 +23,11 @@ export default class BlankTemplate extends HTMLElement {
   disconnectedCallback() {}
 
   attributeChangedCallback(name, oldValue, newValue) {
-    console.log(`Attribute ${name} changed from ${oldValue} to ${newValue}`);
+    // no-op
   }
 
   static get observedAttributes() {
-    return ['some-attribute'];
+    return [];
   }
 }
 
