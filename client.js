@@ -36,6 +36,8 @@ let websocket = null;
 const modalInput = document.querySelector('wsc-modal-input');
 
 window.clientId = null;
+// Identificador lógico de la sesión (persistente entre reconexiones).
+window.sessionId = null;
 let date = null;
 let fromClientAlias;
 let selectedExistingSession = false; // Solo reconstruir chats si el usuario escogió una sesión previa
@@ -67,6 +69,21 @@ function resetReconnectState() {
     clearTimeout(reconnectTimeoutId);
     reconnectTimeoutId = null;
   }
+}
+
+// Generador de identificadores de sesión estables (independientes del id de conexión del servidor).
+function generateSessionId() {
+  try {
+    if (crypto && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {}
+  return (
+    'sess_' +
+    Date.now() +
+    '_' +
+    Math.random().toString(36).slice(2, 10)
+  );
 }
 
 // === SESIONES GUARDADAS (alias <-> sessionId) ===
@@ -180,8 +197,27 @@ async function promptSessionSelectionIfAny() {
         await deleteSession(item.sessionId);
         removeSessionMeta(item.sessionId);
         current.splice(index, 1);
+        if (current.length === 0) {
+          // No quedan sesiones: cerrar modal y forzar nuevo alias
+          modalInput.changeVisibility(false);
+          modalInput.cleanup?.();
+          let alias;
+          do {
+            alias = await modalInput.waitForInput('Enter your alias:');
+          } while (!alias);
+          if (alias) {
+            alias = toUpperCaseFirstLetter(alias);
+            alias = ensureUniqueAlias(alias);
+            window.clientAlias = alias;
+            window.sessionId = generateSessionId();
+            upsertSessionMeta(window.sessionId, alias);
+          }
+          return;
+        }
+        modalInput.mode = 'list';
         modalInput._listItems = current;
         modalInput.render();
+        modalInput.changeVisibility(true);
       } catch {}
     },
   });
@@ -215,10 +251,10 @@ window.openSessionSwitcher = async () => {
         await deleteSession(item.sessionId);
         removeSessionMeta(item.sessionId);
         current.splice(index, 1);
-        modalInput._listItems = current;
-        modalInput.render();
-        // Si se elimina la sesión activa, limpiar UI
-        if (window.clientId === item.sessionId) {
+        if (current.length === 0) {
+          // Cerrar modal, limpiar UI y pedir alias nuevo
+          modalInput.changeVisibility(false);
+          modalInput.cleanup?.();
           try {
             const chatListEl = document.getElementById('wsc-chat-list');
             if (chatListEl && chatListEl.shadowRoot) {
@@ -236,15 +272,73 @@ window.openSessionSwitcher = async () => {
             ) {
               mainScreen.setActiveSessionLabel('');
             }
+            const messageList = document.querySelector('wsc-message-list');
+            if (messageList && typeof messageList.clearMessages === 'function')
+              messageList.clearMessages();
+            window.sessionMessages = {};
+            window.clientId = null;
+            window.sessionId = null;
+          } catch {}
+          let alias;
+          do {
+            alias = await modalInput.waitForInput('Enter your alias:');
+          } while (!alias);
+          if (alias) {
+            alias = toUpperCaseFirstLetter(alias);
+            alias = ensureUniqueAlias(alias);
+            window.clientAlias = alias;
+            window.sessionId = generateSessionId();
+            upsertSessionMeta(window.sessionId, alias);
+            try {
+              const mainScreen = document.querySelector('wsc-main-screen');
+              if (
+                mainScreen &&
+                typeof mainScreen.setActiveSessionLabel === 'function'
+              ) {
+                mainScreen.setActiveSessionLabel(window.clientAlias);
+              }
+            } catch {}
+          }
+          return;
+        }
+        modalInput.mode = 'list';
+        modalInput._listItems = current;
+        modalInput.render();
+        modalInput.changeVisibility(true);
+        if (window.sessionId === item.sessionId) {
+          // Se eliminó la sesión activa: limpiar UI y estado
+          try {
+            const chatListEl = document.getElementById('wsc-chat-list');
+            if (chatListEl && chatListEl.shadowRoot) {
+              const container = chatListEl.shadowRoot.getElementById(
+                'chat-list-container'
+              );
+              if (container)
+                while (container.firstChild)
+                  container.removeChild(container.firstChild);
+            }
+            const mainScreen = document.querySelector('wsc-main-screen');
+            if (
+              mainScreen &&
+              typeof mainScreen.setActiveSessionLabel === 'function'
+            ) {
+              mainScreen.setActiveSessionLabel('');
+            }
+            const messageList = document.querySelector('wsc-message-list');
+            if (messageList && typeof messageList.clearMessages === 'function')
+              messageList.clearMessages();
+            window.sessionMessages = {};
+            window.clientId = null;
+            window.sessionId = null;
           } catch {}
         }
       } catch {}
     },
   });
   if (!chosen) return;
-  if (chosen.sessionId === window.clientId) return; // Sin cambio
-  // Cambiar a sesión seleccionada
-  window.clientId = chosen.sessionId;
+  if (chosen.sessionId === window.sessionId) return; // Sin cambio
+  // Cambiar a sesión seleccionada (no tocamos clientId del servidor)
+  window.sessionId = chosen.sessionId;
   window.clientAlias = chosen.alias;
   selectedExistingSession = true;
   try {
@@ -254,7 +348,7 @@ window.openSessionSwitcher = async () => {
     }
   } catch {}
   // Reconstruir chats desde historial
-  await rebuildChatListFromHistory(window.clientId);
+  await rebuildChatListFromHistory(window.sessionId);
   // Avisar al servidor del nuevo alias (manteniendo id de conexión)
   try {
     if (websocket && websocket.readyState === WebSocket.OPEN) {
@@ -272,13 +366,13 @@ window.openSessionSwitcher = async () => {
 // Refrescar manualmente historial precargado manteniendo el chat seleccionado
 window.refreshSessionHistory = async () => {
   try {
-    if (!window.clientId) return;
+    if (!window.sessionId) return;
     const chatScreen = document.querySelector('wsc-chat-screen');
     let preferredId = null;
     if (chatScreen && typeof chatScreen.selectedClient === 'object') {
       preferredId = chatScreen.selectedClient?.id || null;
     }
-    await rebuildChatListFromHistory(window.clientId);
+    await rebuildChatListFromHistory(window.sessionId);
     if (preferredId) {
       // Intentar re-seleccionar el chat anterior
       const chatListEl = document.getElementById('wsc-chat-list');
@@ -452,10 +546,26 @@ function connectWebSocket() {
                   mainScreen.setActiveSessionLabel(window.clientAlias);
                 }
               } catch {}
-              // Reconstruir lista y mensajes de la sesión activa (continúa sesión previa)
+              // Asegurar sessionId lógico estable para esta alias
+              if (!window.sessionId) {
+                try {
+                  const metaMatch = getSessionsMeta().find(
+                    (m) => m.alias === window.clientAlias
+                  );
+                  if (metaMatch) {
+                    window.sessionId = metaMatch.sessionId;
+                  } else {
+                    window.sessionId = generateSessionId();
+                    upsertSessionMeta(window.sessionId, window.clientAlias);
+                  }
+                } catch {
+                  window.sessionId = generateSessionId();
+                }
+              }
+              // Reconstruir lista y mensajes de la sesión activa usando sessionId estable
               (async () => {
                 try {
-                  await rebuildChatListFromHistory(window.clientId);
+                  await rebuildChatListFromHistory(window.sessionId);
                 } catch {}
               })();
             } else {
@@ -465,7 +575,7 @@ function connectWebSocket() {
                   const chosen = await promptSessionSelectionIfAny();
                   if (chosen && chosen.sessionId) {
                     // Usar ese id para la sesión local (DB) y alias guardado
-                    window.clientId = chosen.sessionId;
+                    window.sessionId = chosen.sessionId;
                     window.clientAlias = chosen.alias;
                     fromClientAlias = chosen.alias;
                     selectedExistingSession = true;
@@ -489,7 +599,7 @@ function connectWebSocket() {
                       }
                     } catch {}
                     // Reconstruir lista de chats desde historial solo si es una sesión previa
-                    await rebuildChatListFromHistory(window.clientId);
+                      await rebuildChatListFromHistory(window.sessionId);
                   } else {
                     // No hay selección; pedir alias nuevo
                     do {
@@ -500,8 +610,9 @@ function connectWebSocket() {
                       fromClientAlias = toUpperCaseFirstLetter(fromClientAlias);
                       fromClientAlias = ensureUniqueAlias(fromClientAlias);
                       window.clientAlias = fromClientAlias;
-                      // Guardar meta con el id asignado por el servidor
-                      upsertSessionMeta(clientId, fromClientAlias);
+                      // Generar y guardar nuevo sessionId lógico (independiente del id de conexión)
+                      window.sessionId = generateSessionId();
+                      upsertSessionMeta(window.sessionId, fromClientAlias);
                       websocket.send(
                         JSON.stringify({
                           type: 'alias',
@@ -520,8 +631,8 @@ function connectWebSocket() {
                           mainScreen.setActiveSessionLabel(window.clientAlias);
                         }
                       } catch {}
-                      // Reconstruir (lista vacía y mensaje list limpio para sesión nueva)
-                      await rebuildChatListFromHistory(clientId);
+                      // Reconstruir (lista vacía y mensaje list limpio para sesión nueva) usando sessionId
+                      await rebuildChatListFromHistory(window.sessionId);
                     }
                   }
                 } catch (err) {
@@ -557,7 +668,7 @@ function connectWebSocket() {
               // Persistir en IndexedDB
               try {
                 saveMessage({
-                  sessionId: window.clientId,
+                  sessionId: window.sessionId || window.clientId,
                   chatId,
                   direction: 'in',
                   type: 'text',
@@ -671,7 +782,7 @@ function connectWebSocket() {
               // Persistir archivo en IndexedDB
               try {
                 saveMessage({
-                  sessionId: window.clientId,
+                  sessionId: window.sessionId || window.clientId,
                   chatId,
                   direction: 'in',
                   type: 'file',
