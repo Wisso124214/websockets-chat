@@ -7,12 +7,6 @@
  * - Administra la creación y actualización visual de chats (usuarios y grupos).
  * - Persiste mensajes (texto y archivos) en IndexedDB para cada sesión/Chat.
  * - Expone una pequeña API global para operaciones con grupos (crear, añadir, remover, eliminar).
- *
- * Principios de legibilidad aplicados:
- * - Nombres descriptivos y consistentes (camelCase para funciones/variables).
- * - Comentarios orientados al "por qué" y organización por secciones.
- * - Uso de constantes para valores configurables (host/puerto).
- * - Estructura simple de switch por tipo de mensaje recibido.
  */
 import MainScreen from './screens/mainScreen/MainScreen.js';
 import ModalInput from './components/modalInput/modalInput.js';
@@ -26,8 +20,6 @@ import {
 import { getMessagesBySession } from './components/db/indexedDB.js';
 
 // === CONFIGURACIÓN BÁSICA DE CONEXIÓN ===
-// Para desarrollo local con Live Server (HTTP en 127.0.0.1:5500)
-// el servidor WebSocket corre por separado.
 const WS_PORT = 8081;
 const WS_HOST = location.hostname || '127.0.0.1';
 const wsUri = `ws://${WS_HOST}:${WS_PORT}/`;
@@ -36,7 +28,6 @@ let websocket = null;
 const modalInput = document.querySelector('wsc-modal-input');
 
 window.clientId = null;
-// Identificador lógico de la sesión (persistente entre reconexiones).
 window.sessionId = null;
 let date = null;
 let fromClientAlias;
@@ -45,22 +36,18 @@ let selectedExistingSession = false; // Solo reconstruir chats si el usuario esc
 // === RECONEXIÓN AUTOMÁTICA ===
 // Estrategia: backoff exponencial simple (1s, 2s, 4s, ... máx 30s).
 let reconnectAttempts = 0;
-const MAX_RECONNECT_DELAY = 30000; // 30s
+const RECONNECT_DELAY = 1000; // 1s
 let manualClose = false; // Para distinguir cierre intencional (navegación) de caída.
 let reconnectTimeoutId = null;
 
 function scheduleReconnect() {
   if (manualClose) return; // No reconectar si el usuario salió.
-  if (reconnectTimeoutId) return; // Ya programado.
-  const delay = Math.min(
-    1000 * Math.pow(2, reconnectAttempts),
-    MAX_RECONNECT_DELAY
-  );
+  if (reconnectTimeoutId) return; // Ya reconectado.
   reconnectAttempts += 1;
   reconnectTimeoutId = setTimeout(() => {
     reconnectTimeoutId = null;
     connectWebSocket();
-  }, delay);
+  }, RECONNECT_DELAY);
 }
 
 function resetReconnectState() {
@@ -598,8 +585,9 @@ function connectWebSocket() {
                   } else {
                     // No hay selección; pedir alias nuevo
                     do {
-                      fromClientAlias =
-                        await modalInput.waitForInput('Enter your alias:');
+                      fromClientAlias = await modalInput.waitForInput(
+                        'Enter your alias:'
+                      );
                     } while (!fromClientAlias);
                     if (fromClientAlias) {
                       fromClientAlias = toUpperCaseFirstLetter(fromClientAlias);
