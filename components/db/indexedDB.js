@@ -105,7 +105,8 @@ export async function saveMessage(record) {
     const data = {
       sessionId:
         (record && record.sessionId) ||
-        (typeof window !== 'undefined' && (window.sessionId || window.clientId)) ||
+        (typeof window !== 'undefined' &&
+          (window.sessionId || window.clientId)) ||
         'default',
       chatId: null,
       direction: 'in', // 'in' | 'out'
@@ -118,7 +119,8 @@ export async function saveMessage(record) {
       ...record,
       sessionId:
         record?.sessionId ||
-        (typeof window !== 'undefined' && (window.sessionId || window.clientId)) ||
+        (typeof window !== 'undefined' &&
+          (window.sessionId || window.clientId)) ||
         'default',
       createdAt: record?.createdAt ?? now,
     };
@@ -142,7 +144,8 @@ export async function getMessagesByChat(chatId, sessionId) {
     const store = tx.objectStore(STORE);
     const currentSessionId =
       sessionId ||
-      (typeof window !== 'undefined' && (window.sessionId || window.clientId)) ||
+      (typeof window !== 'undefined' &&
+        (window.sessionId || window.clientId)) ||
       'default';
     const hasSessionCompound = store.indexNames.contains(
       'sessionId_chatId_createdAt'
@@ -248,7 +251,8 @@ export async function deleteMessagesByChat(chatId, sessionId) {
     const store = tx.objectStore(STORE);
     const currentSessionId =
       sessionId ||
-      (typeof window !== 'undefined' && (window.sessionId || window.clientId)) ||
+      (typeof window !== 'undefined' &&
+        (window.sessionId || window.clientId)) ||
       'default';
     let index;
     let range;
@@ -312,7 +316,8 @@ export async function clearBySession(sessionId) {
     const store = tx.objectStore(STORE);
     const currentSessionId =
       sessionId ||
-      (typeof window !== 'undefined' && (window.sessionId || window.clientId)) ||
+      (typeof window !== 'undefined' &&
+        (window.sessionId || window.clientId)) ||
       'default';
     if (!store.indexNames.contains('sessionId')) {
       // Si no existe índice por sesión, limpiar todo (comportamiento v1)
@@ -428,7 +433,8 @@ export async function getChatsSummaryBySession(sessionId) {
     const store = tx.objectStore(STORE);
     const currentSessionId =
       sessionId ||
-      (typeof window !== 'undefined' && (window.sessionId || window.clientId)) ||
+      (typeof window !== 'undefined' &&
+        (window.sessionId || window.clientId)) ||
       'default';
     const map = new Map();
 
@@ -517,7 +523,8 @@ export async function getMessagesBySession(sessionId) {
     const store = tx.objectStore(STORE);
     const currentSessionId =
       sessionId ||
-      (typeof window !== 'undefined' && (window.sessionId || window.clientId)) ||
+      (typeof window !== 'undefined' &&
+        (window.sessionId || window.clientId)) ||
       'default';
     const results = [];
     const push = (v) => {

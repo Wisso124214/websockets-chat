@@ -78,12 +78,7 @@ function generateSessionId() {
       return crypto.randomUUID();
     }
   } catch {}
-  return (
-    'sess_' +
-    Date.now() +
-    '_' +
-    Math.random().toString(36).slice(2, 10)
-  );
+  return 'sess_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
 }
 
 // === SESIONES GUARDADAS (alias <-> sessionId) ===
@@ -599,7 +594,7 @@ function connectWebSocket() {
                       }
                     } catch {}
                     // Reconstruir lista de chats desde historial solo si es una sesión previa
-                      await rebuildChatListFromHistory(window.sessionId);
+                    await rebuildChatListFromHistory(window.sessionId);
                   } else {
                     // No hay selección; pedir alias nuevo
                     do {
